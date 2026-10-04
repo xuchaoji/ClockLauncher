@@ -312,6 +312,7 @@ public class StandbyClockView extends FrameLayout {
             weatherCardView.setTextColor(Color.WHITE);
         }
         weatherCardView.setTextBold(prefs.getBoolean(DesktopConfig.KEY_WEATHER_BOLD, true));
+        weatherCardView.setTextScale(prefs.getInt(DesktopConfig.KEY_WEATHER_TEXT_SCALE, 100) / 100f);
 
         cpuMonitorView.setPanelAlpha(prefs.getInt(DesktopConfig.KEY_CPU_ALPHA, 100));
 
@@ -376,20 +377,40 @@ public class StandbyClockView extends FrameLayout {
     }
 
     /**
-     * 响应式布局自适应：完美支持竖屏手机与横屏底座模式
+     * 响应式布局自适应：完美支持竖屏手机与横屏底座模式，
+     * 若用户在排版模式中自定义了位置，则精准还原用户自定义坐标。
      */
     private void requestLayoutResponsive() {
         int w = getWidth();
         int h = getHeight();
         if (w <= 0 || h <= 0) return;
 
+        // 若存在自定义自由拖拽排版，则精准还原组件位置
+        if (DesktopConfig.hasPosition(prefs, DesktopConfig.COMPONENT_CLOCK)) {
+            restoreCustomPosition(clockView, DesktopConfig.COMPONENT_CLOCK);
+            restoreCustomPosition(dateView, DesktopConfig.COMPONENT_DATE);
+            restoreCustomPosition(batteryView, DesktopConfig.COMPONENT_BATTERY);
+            restoreCustomPosition(networkView, DesktopConfig.COMPONENT_NETWORK);
+            restoreCustomPosition(cpuMonitorView, DesktopConfig.COMPONENT_CPU);
+            restoreCustomPosition(weatherCardView, DesktopConfig.COMPONENT_WEATHER);
+
+            int dockW = getViewWidth(bottomDockBar);
+            setChildBounds(bottomDockBar, (w - dockW) / 2, h - dp(64), dockW, dp(42));
+            return;
+        }
+
         boolean isPortrait = w < h;
+
+        int prefWeatherW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 300));
+        int prefWeatherH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96));
+        int prefCpuW = dp(prefs.getInt(DesktopConfig.KEY_CPU_WIDTH, 140));
+        int prefCpuH = dp(prefs.getInt(DesktopConfig.KEY_CPU_HEIGHT, 220));
 
         if (isPortrait) {
             // ============ 竖屏布局 (标准手机主屏) ============
             // 1. 顶部天气卡片 (顶栏居中偏上)
-            int cardW = Math.min(w - dp(32), dp(320));
-            int cardH = dp(96);
+            int cardW = Math.min(w - dp(32), prefWeatherW);
+            int cardH = prefWeatherH;
             setChildBounds(weatherCardView, (w - cardW) / 2, dp(54), cardW, cardH);
 
             // 2. 电量与实时网速（天气卡片下方并排状态条）
@@ -404,8 +425,8 @@ public class StandbyClockView extends FrameLayout {
             setChildBounds(dateView, (w - getViewWidth(dateView)) / 2, dateY, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
 
             // 4. CPU曲线面板 (紧随日期下方，居中轻量展示)
-            int cpuW = Math.min(w - dp(48), dp(260));
-            int cpuH = dp(130);
+            int cpuW = Math.min(w - dp(48), prefCpuW);
+            int cpuH = Math.min(dp(260), prefCpuH);
             int cpuY = dateY + getViewHeight(dateView) + dp(16);
             if (cpuY + cpuH < h - dp(90)) {
                 setChildBounds(cpuMonitorView, (w - cpuW) / 2, cpuY, cpuW, cpuH);
@@ -420,8 +441,8 @@ public class StandbyClockView extends FrameLayout {
         } else {
             // ============ 横屏布局 (桌面待机时钟) ============
             // 1. 左上角：天气卡片
-            int cardW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 290));
-            int cardH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96));
+            int cardW = prefWeatherW;
+            int cardH = prefWeatherH;
             setChildBounds(weatherCardView, dp(24), dp(18), cardW, cardH);
 
             // 2. 右上角：日期与电量
@@ -432,8 +453,8 @@ public class StandbyClockView extends FrameLayout {
             setChildBounds(clockView, (w - getViewWidth(clockView)) / 2, (h - getViewHeight(clockView)) / 2, LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
 
             // 4. 左侧中间偏下：CPU监控
-            int cpuW = dp(140);
-            int cpuH = dp(200);
+            int cpuW = prefCpuW;
+            int cpuH = prefCpuH;
             setChildBounds(cpuMonitorView, dp(24), (h - cpuH) / 2 + dp(20), cpuW, cpuH);
 
             // 5. 右下角：网速
@@ -443,6 +464,33 @@ public class StandbyClockView extends FrameLayout {
             int dockW = getViewWidth(bottomDockBar);
             setChildBounds(bottomDockBar, (w - dockW) / 2, h - dp(56), dockW, dp(42));
         }
+    }
+
+    private void restoreCustomPosition(View view, String component) {
+        if (view == null || !DesktopConfig.hasPosition(prefs, component)) return;
+        int vw = getViewWidth(view);
+        int vh = getViewHeight(view);
+        int w = getWidth();
+        int h = getHeight();
+        float maxX = Math.max(0, w - vw);
+        float maxY = Math.max(0, h - vh);
+        float ratioX = clamp(DesktopConfig.getX(prefs, component), 0f, 1f);
+        float ratioY = clamp(DesktopConfig.getY(prefs, component), 0f, 1f);
+        int targetX = Math.round(ratioX * maxX);
+        int targetY = Math.round(ratioY * maxY);
+
+        int reqW = LayoutParams.WRAP_CONTENT;
+        int reqH = LayoutParams.WRAP_CONTENT;
+        if (view == weatherCardView) {
+            reqW = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_WIDTH, 290));
+            reqH = dp(prefs.getInt(DesktopConfig.KEY_WEATHER_HEIGHT, 96));
+        } else if (view == cpuMonitorView) {
+            reqW = dp(prefs.getInt(DesktopConfig.KEY_CPU_WIDTH, 140));
+            reqH = dp(prefs.getInt(DesktopConfig.KEY_CPU_HEIGHT, 220));
+        } else if (view == networkView) {
+            reqW = dp(160);
+        }
+        setChildBounds(view, targetX, targetY, reqW, reqH);
     }
 
     private void setChildBounds(View view, int x, int y, int width, int height) {

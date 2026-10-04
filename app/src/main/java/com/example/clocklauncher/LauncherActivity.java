@@ -1,17 +1,14 @@
 package com.example.clocklauncher;
 
-import android.app.AlertDialog;
 import android.app.role.RoleManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
@@ -19,13 +16,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.CheckBox;
-import android.widget.EditText;
 import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
-import android.widget.SeekBar;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -33,7 +24,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
-import java.util.Locale;
 
 /**
  * 手机默认桌面 Launcher 主入口：
@@ -234,174 +224,33 @@ public class LauncherActivity extends AppCompatActivity {
     }
 
     /**
-     * 桌面时钟全套定制对话框
+     * 呼出「个性化设置中心」。
+     * 主界面只列分类入口，具体设置项在各自分类面板内，避免一次性平铺所有选项。
      */
     private void showDesktopSettingsDialog() {
-        ScrollView scroll = new ScrollView(this);
-        LinearLayout layout = new LinearLayout(this);
-        layout.setOrientation(LinearLayout.VERTICAL);
-        int pad = dp(20);
-        layout.setPadding(pad, pad, pad, pad);
-        scroll.addView(layout);
-
-        // 标题与默认桌面状态
-        TextView tvTitle = new TextView(this);
-        tvTitle.setText("⏰ 待机桌面设置");
-        tvTitle.setTextSize(18);
-        tvTitle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        tvTitle.setTextColor(Color.WHITE);
-        layout.addView(tvTitle);
-
-        boolean isDefault = isDefaultLauncher();
-        TextView tvDefaultStatus = new TextView(this);
-        tvDefaultStatus.setText(isDefault ? "状态：✅ 已是系统默认桌面" : "状态：⚠️ 当前尚未设为默认桌面 (点击设置)");
-        tvDefaultStatus.setTextColor(isDefault ? Color.parseColor("#70D8A5") : Color.parseColor("#FFC857"));
-        tvDefaultStatus.setTextSize(13);
-        tvDefaultStatus.setPadding(0, dp(6), 0, dp(12));
-        tvDefaultStatus.setOnClickListener(v -> requestSetDefaultLauncher());
-        layout.addView(tvDefaultStatus);
-
-        // 1. 组件显示开关
-        addSectionHeader(layout, "组件显示开关");
-        CheckBox cbDate = addCheckBox(layout, "显示日期与星期", prefs.getBoolean(DesktopConfig.KEY_SHOW_DATE, true));
-        CheckBox cbBattery = addCheckBox(layout, "显示电池电量", ClockPrefs.showDesktopBattery(prefs));
-        CheckBox cbNetwork = addCheckBox(layout, "显示实时网速", ClockPrefs.showDesktopNetwork(prefs));
-        CheckBox cbCpu = addCheckBox(layout, "显示 CPU 曲线监控", ClockPrefs.showDesktopCpu(prefs));
-        CheckBox cbWeather = addCheckBox(layout, "显示天气卡片", prefs.getBoolean(DesktopConfig.KEY_SHOW_WEATHER, true));
-
-        // 2. 时钟样式定制
-        addSectionHeader(layout, "时钟样式与字体");
-        TextView tvSizeLabel = new TextView(this);
-        int curSize = ClockPrefs.getDesktopTextSize(prefs);
-        tvSizeLabel.setText(String.format(Locale.getDefault(), "时钟字号：%d sp", curSize));
-        tvSizeLabel.setTextColor(Color.WHITE);
-        layout.addView(tvSizeLabel);
-
-        SeekBar sbSize = new SeekBar(this);
-        sbSize.setMax(140);
-        sbSize.setProgress(curSize - 40);
-        sbSize.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                tvSizeLabel.setText(String.format(Locale.getDefault(), "时钟字号：%d sp", progress + 40));
+        DesktopSettingsDialog.show(this, prefs, new DesktopSettingsDialog.Host() {
+            @Override
+            public void onSettingsChanged() {
+                if (standbyClockView != null) {
+                    standbyClockView.applySettings();
+                }
             }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
-            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+
+            @Override
+            public boolean isDefaultLauncher() {
+                return LauncherActivity.this.isDefaultLauncher();
+            }
+
+            @Override
+            public void requestSetDefaultLauncher() {
+                LauncherActivity.this.requestSetDefaultLauncher();
+            }
+
+            @Override
+            public void openLayoutEditor() {
+                startActivity(new Intent(LauncherActivity.this, DesktopLayoutEditActivity.class));
+            }
         });
-        layout.addView(sbSize);
-
-        CheckBox cbBold = addCheckBox(layout, "粗体显示时钟", ClockPrefs.isDesktopBold(prefs));
-
-        // 3. 颜色选择按钮
-        LinearLayout colorRow = new LinearLayout(this);
-        colorRow.setOrientation(LinearLayout.HORIZONTAL);
-        colorRow.setPadding(0, dp(8), 0, dp(8));
-
-        TextView btnColor = new TextView(this);
-        btnColor.setText("🎨 选择文字颜色");
-        btnColor.setTextColor(Color.WHITE);
-        btnColor.setPadding(dp(12), dp(8), dp(12), dp(8));
-        btnColor.setBackgroundColor(Color.argb(90, 255, 255, 255));
-        btnColor.setOnClickListener(v -> {
-            ColorPickerDialog.show(this, "选择时钟颜色", ClockPrefs.getDesktopTextColor(prefs), false, colorHex -> {
-                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_TEXT_COLOR, colorHex).apply();
-                if (standbyClockView != null) standbyClockView.applySettings();
-                Toast.makeText(this, "已更新文字颜色: " + colorHex, Toast.LENGTH_SHORT).show();
-            });
-        });
-        colorRow.addView(btnColor);
-
-        TextView btnShadow = new TextView(this);
-        btnShadow.setText("🌑 选择阴影颜色");
-        btnShadow.setTextColor(Color.WHITE);
-        btnShadow.setPadding(dp(12), dp(8), dp(12), dp(8));
-        btnShadow.setBackgroundColor(Color.argb(90, 255, 255, 255));
-        LinearLayout.LayoutParams shLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        shLp.leftMargin = dp(12);
-        colorRow.addView(btnShadow, shLp);
-        btnShadow.setOnClickListener(v -> {
-            ColorPickerDialog.show(this, "选择阴影颜色", ClockPrefs.getDesktopShadowColor(prefs), true, colorHex -> {
-                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_SHADOW_COLOR, colorHex).apply();
-                if (standbyClockView != null) standbyClockView.applySettings();
-                Toast.makeText(this, "已更新阴影颜色", Toast.LENGTH_SHORT).show();
-            });
-        });
-        layout.addView(colorRow);
-
-        // 4. 天气城市配置
-        addSectionHeader(layout, "天气城市设置");
-        EditText etCity = new EditText(this);
-        etCity.setHint("输入城市名称 (如 北京, 上海, 南京)");
-        etCity.setTextColor(Color.WHITE);
-        etCity.setHintTextColor(Color.argb(120, 255, 255, 255));
-        etCity.setText(prefs.getString(DesktopConfig.KEY_WEATHER_CITY, "北京"));
-        layout.addView(etCity);
-
-        // 5. 夜间模式
-        addSectionHeader(layout, "夜间模式与护眼");
-        CheckBox cbAutoNight = addCheckBox(layout, "定时开启夜间纯黑模式 (22:00 ~ 07:00)",
-                prefs.getBoolean(DesktopConfig.KEY_NIGHT_MODE_AUTO, false));
-        CheckBox cbExtraDim = addCheckBox(layout, "夜间极暗防刺眼微调",
-                prefs.getBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, true));
-
-        new AlertDialog.Builder(this)
-                .setView(scroll)
-                .setPositiveButton("保存并应用", (dialog, which) -> {
-                    SharedPreferences.Editor editor = prefs.edit();
-                    editor.putBoolean(DesktopConfig.KEY_SHOW_DATE, cbDate.isChecked());
-                    editor.putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_BATTERY, cbBattery.isChecked());
-                    editor.putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_NETWORK, cbNetwork.isChecked());
-                    editor.putBoolean(ClockPrefs.KEY_DESKTOP_SHOW_CPU, cbCpu.isChecked());
-                    editor.putBoolean(DesktopConfig.KEY_SHOW_WEATHER, cbWeather.isChecked());
-                    editor.putInt(ClockPrefs.KEY_DESKTOP_TEXT_SIZE, sbSize.getProgress() + 40);
-                    editor.putBoolean(ClockPrefs.KEY_DESKTOP_BOLD, cbBold.isChecked());
-                    editor.putBoolean(DesktopConfig.KEY_NIGHT_MODE_AUTO, cbAutoNight.isChecked());
-                    editor.putBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, cbExtraDim.isChecked());
-
-                    String city = etCity.getText().toString().trim();
-                    if (!city.isEmpty()) {
-                        editor.putString(DesktopConfig.KEY_WEATHER_CITY, city);
-                        WeatherManager.searchCity(city, new WeatherManager.CitySearchCallback() {
-                            @Override
-                            public void onSuccess(String cityName, float lat, float lon) {
-                                prefs.edit().putFloat(DesktopConfig.KEY_WEATHER_LAT, lat)
-                                        .putFloat(DesktopConfig.KEY_WEATHER_LON, lon).apply();
-                                if (standbyClockView != null) standbyClockView.applySettings();
-                            }
-                            @Override
-                            public void onError(String message) { }
-                        });
-                    }
-                    editor.apply();
-
-                    if (standbyClockView != null) {
-                        standbyClockView.applySettings();
-                    }
-                    Toast.makeText(this, "桌面设置已保存", Toast.LENGTH_SHORT).show();
-                })
-                .setNeutralButton("设为默认桌面", (dialog, which) -> requestSetDefaultLauncher())
-                .setNegativeButton("取消", null)
-                .show();
-    }
-
-    private void addSectionHeader(LinearLayout layout, String title) {
-        TextView tv = new TextView(this);
-        tv.setText(title);
-        tv.setTextColor(Color.parseColor("#64B5F6"));
-        tv.setTextSize(14);
-        tv.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        tv.setPadding(0, dp(14), 0, dp(4));
-        layout.addView(tv);
-    }
-
-    private CheckBox addCheckBox(LinearLayout layout, String text, boolean checked) {
-        CheckBox cb = new CheckBox(this);
-        cb.setText(text);
-        cb.setTextColor(Color.WHITE);
-        cb.setChecked(checked);
-        cb.setPadding(0, dp(4), 0, dp(4));
-        layout.addView(cb);
-        return cb;
     }
 
     private int dp(int value) {

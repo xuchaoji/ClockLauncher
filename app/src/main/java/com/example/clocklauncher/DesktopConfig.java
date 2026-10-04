@@ -36,6 +36,7 @@ public final class DesktopConfig {
     public static final String KEY_WEATHER_WIDTH = "desktop_weather_width";
     public static final String KEY_WEATHER_HEIGHT = "desktop_weather_height";
     public static final String KEY_WEATHER_ALPHA = "desktop_weather_alpha";
+    public static final String KEY_WEATHER_TEXT_SCALE = "desktop_weather_text_scale";
     public static final String KEY_WEATHER_DATA_CACHE = "desktop_weather_data_cache";
     public static final String KEY_WEATHER_CACHE_TIME = "desktop_weather_cache_time";
     public static final String KEY_NIGHT_MODE_MANUAL = "desktop_night_mode_manual";
@@ -73,7 +74,7 @@ public final class DesktopConfig {
             KEY_CPU_WIDTH, KEY_CPU_HEIGHT, KEY_CPU_ALPHA,
             KEY_SHOW_WEATHER, KEY_WEATHER_CITY, KEY_WEATHER_LAT, KEY_WEATHER_LON,
             KEY_WEATHER_MODE, KEY_WEATHER_COLOR, KEY_WEATHER_SIZE, KEY_WEATHER_BOLD,
-            KEY_WEATHER_WIDTH, KEY_WEATHER_HEIGHT, KEY_WEATHER_ALPHA,
+            KEY_WEATHER_WIDTH, KEY_WEATHER_HEIGHT, KEY_WEATHER_ALPHA, KEY_WEATHER_TEXT_SCALE,
             posX(COMPONENT_CLOCK), posY(COMPONENT_CLOCK), posX(COMPONENT_DATE), posY(COMPONENT_DATE),
             posX(COMPONENT_BATTERY), posY(COMPONENT_BATTERY), posX(COMPONENT_NETWORK), posY(COMPONENT_NETWORK),
             posX(COMPONENT_CPU), posY(COMPONENT_CPU), posX(COMPONENT_WEATHER), posY(COMPONENT_WEATHER)
@@ -108,6 +109,7 @@ public final class DesktopConfig {
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_WIDTH, 300);
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_HEIGHT, 96);
         changed |= putIntIfMissing(prefs, e, KEY_WEATHER_ALPHA, 100);
+        changed |= putIntIfMissing(prefs, e, KEY_WEATHER_TEXT_SCALE, 100);
         changed |= putBooleanIfMissing(prefs, e, KEY_NIGHT_MODE_MANUAL, false);
         changed |= putBooleanIfMissing(prefs, e, KEY_NIGHT_MODE_AUTO, false);
         changed |= putStringIfMissing(prefs, e, KEY_NIGHT_MODE_START, DEFAULT_NIGHT_START);
@@ -181,6 +183,17 @@ public final class DesktopConfig {
 
     public static boolean hasPosition(SharedPreferences prefs, String component) {
         return prefs.contains(posX(component)) && prefs.contains(posY(component));
+    }
+
+    public static void resetAllPositions(SharedPreferences prefs) {
+        prefs.edit()
+                .remove(posX(COMPONENT_CLOCK)).remove(posY(COMPONENT_CLOCK))
+                .remove(posX(COMPONENT_DATE)).remove(posY(COMPONENT_DATE))
+                .remove(posX(COMPONENT_BATTERY)).remove(posY(COMPONENT_BATTERY))
+                .remove(posX(COMPONENT_NETWORK)).remove(posY(COMPONENT_NETWORK))
+                .remove(posX(COMPONENT_CPU)).remove(posY(COMPONENT_CPU))
+                .remove(posX(COMPONENT_WEATHER)).remove(posY(COMPONENT_WEATHER))
+                .apply();
     }
 
     public static float getX(SharedPreferences prefs, String component) { return prefs.getFloat(posX(component), 0.5f); }

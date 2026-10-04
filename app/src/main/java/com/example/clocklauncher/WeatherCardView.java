@@ -32,6 +32,7 @@ public class WeatherCardView extends View {
     private int panelAlphaPercent = 100;
     private int customTextColor = Color.WHITE;
     private boolean customBold = true;
+    private float textScale = 1.0f;
 
     private String cityName = "北京";
     private String currentSummary = "天气加载中...";
@@ -117,6 +118,12 @@ public class WeatherCardView extends View {
 
     public void setTextBold(boolean bold) {
         this.customBold = bold;
+        invalidate();
+    }
+
+    /** 卡片内文字缩放比例（1.0 为默认） */
+    public void setTextScale(float scale) {
+        this.textScale = Math.max(0.6f, Math.min(1.8f, scale));
         invalidate();
     }
 
@@ -314,7 +321,7 @@ public class WeatherCardView extends View {
     private void drawHeader(Canvas canvas, int w, float headerH, float density, int alpha255) {
         paint.setStyle(Paint.Style.FILL);
         paint.setFakeBoldText(true);
-        paint.setTextSize(11.5f * density);
+        paint.setTextSize(11.5f * density * textScale);
         paint.setColor(Color.argb(alpha255, 240, 245, 255));
 
         // 左侧实时概况文本
@@ -324,7 +331,7 @@ public class WeatherCardView extends View {
 
         // 右侧模式指示器胶囊
         String badgeText = (cardMode == MODE_DAILY) ? "📅 三日" : "⏱️ 逐小时";
-        paint.setTextSize(10f * density);
+        paint.setTextSize(10f * density * textScale);
         float badgeTextW = paint.measureText(badgeText);
         float badgePadH = 6 * density;
         float badgeW = badgeTextW + badgePadH * 2;
@@ -403,7 +410,7 @@ public class WeatherCardView extends View {
 
             // 行 1: 日期 + 昨/今/明 (单行: 10/2 今)
             float cy0 = top + rowH / 2f;
-            paint.setTextSize(11.5f * density);
+            paint.setTextSize(11.5f * density * textScale);
             paint.setFakeBoldText(true);
             paint.setColor(item.isToday ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 235, 240, 255));
             String dateLabel = item.dateStr + " " + item.sublabel;
@@ -411,7 +418,7 @@ public class WeatherCardView extends View {
 
             // 行 2: 天气图标 + 状况 (单行: ⛅ 晴间多云)
             float cy1 = r0Bottom + rowH / 2f;
-            paint.setTextSize(11f * density);
+            paint.setTextSize(11f * density * textScale);
             paint.setFakeBoldText(false);
             paint.setColor(Color.argb(alpha255, 245, 245, 255));
             String weatherLabel = item.icon + " " + item.weatherDesc;
@@ -419,7 +426,7 @@ public class WeatherCardView extends View {
 
             // 行 3: 单行温度 (单行: 11~23°)
             float cy2 = r1Bottom + rowH / 2f;
-            paint.setTextSize(12f * density);
+            paint.setTextSize(12f * density * textScale);
             paint.setFakeBoldText(true);
             paint.setColor(item.isToday ? Color.argb(alpha255, 255, 215, 100) : Color.argb(alpha255, 255, 190, 110));
             String tempLabel = item.minTemp + "~" + item.maxTemp + "°";
@@ -480,7 +487,7 @@ public class WeatherCardView extends View {
 
             // 行 1: 时间 (如 13:00 现 或 12:00 前)
             float cy0 = top + rowH / 2f;
-            paint.setTextSize(10.5f * density);
+            paint.setTextSize(10.5f * density * textScale);
             paint.setFakeBoldText(true);
             paint.setColor(item.isNow ? Color.argb(alpha255, 120, 220, 255) : Color.argb(alpha255, 235, 240, 255));
             String timeText;
@@ -495,14 +502,14 @@ public class WeatherCardView extends View {
 
             // 行 2: 天气图标 + 简短天气 (如 ☀️晴 或 ⛅多云)
             float cy1 = r0Bottom + rowH / 2f;
-            paint.setTextSize(10.5f * density);
+            paint.setTextSize(10.5f * density * textScale);
             paint.setFakeBoldText(false);
             paint.setColor(Color.argb(alpha255, 245, 245, 255));
             drawTextCenteredAt(canvas, item.icon + item.weatherDesc, cx, cy1);
 
             // 行 3: 单行温度 (如 20°)
             float cy2 = r1Bottom + rowH / 2f;
-            paint.setTextSize(12f * density);
+            paint.setTextSize(12f * density * textScale);
             paint.setFakeBoldText(true);
             paint.setColor(item.isNow ? Color.argb(alpha255, 255, 215, 100) : Color.argb(alpha255, 120, 220, 255));
             drawTextCenteredAt(canvas, item.temp + "°", cx, cy2);
