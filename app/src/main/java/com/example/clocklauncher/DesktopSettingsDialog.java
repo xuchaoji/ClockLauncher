@@ -1041,8 +1041,14 @@ public final class DesktopSettingsDialog {
     // ==================================================================
     private void showDarkDialog(String title, View content, DialogInterface.OnClickListener positive,
                                 String positiveText) {
+        // 手势屏蔽：长按桌面弹出的瞬间，手指抬起的那一下不应误触到分类卡片
+        TouchGuardLayout guard = new TouchGuardLayout(context);
+        guard.addView(content, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         ScrollView scroll = new ScrollView(context);
-        scroll.addView(content);
+        scroll.addView(guard, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         AlertDialog.Builder builder = new AlertDialog.Builder(context);
         if (positiveText != null) {
@@ -1053,6 +1059,7 @@ public final class DesktopSettingsDialog {
         AlertDialog dialog = builder.create();
 
         dialog.setOnShowListener(d -> {
+            guard.arm();
             Window window = dialog.getWindow();
             if (window == null) return;
             window.setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(Color.TRANSPARENT));
@@ -1071,6 +1078,7 @@ public final class DesktopSettingsDialog {
         });
 
         dialog.show();
+        guard.arm();
         // show() 之后再设置一次，确保 window 已创建
         Window window = dialog.getWindow();
         if (window != null) {

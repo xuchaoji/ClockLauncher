@@ -6,11 +6,13 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 
@@ -31,6 +33,9 @@ public final class ColorPickerDialog {
         } catch (Exception e) {
             initialColor = allowAlpha ? Color.argb(255, 0, 0, 0) : Color.WHITE;
         }
+        final String originalColorText = colorToString(initialColor, allowAlpha);
+        // 用户是否真正动过取色控件：没动过就按原值返回，避免「点开又确定」把颜色改掉
+        final boolean[] userChanged = new boolean[]{false};
 
         LinearLayout root = new LinearLayout(context);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -47,12 +52,40 @@ public final class ColorPickerDialog {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         ColorPaletteView paletteView = new ColorPaletteView(context, initialColor);
+        // 色域高度自适应：横屏（桌面底座模式）窗口很矮，固定 220dp 会把
+        // 快捷色块和滑块全挤到屏幕外，这里按屏幕高度与朝向共同决定。
+        int screenH = context.getResources().getDisplayMetrics().heightPixels;
+        boolean landscape = screenH < context.getResources().getDisplayMetrics().widthPixels;
+        int paletteH = landscape
+                ? Math.max(dp(context, 90), Math.round(screenH * 0.24f))
+                : Math.min(dp(context, 220), Math.round(screenH * 0.30f));
         LinearLayout.LayoutParams paletteParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(context, 220));
-        paletteParams.topMargin = dp(context, 12);
+                ViewGroup.LayoutParams.MATCH_PARENT, paletteH);
+        paletteParams.topMargin = dp(context, 8);
         root.addView(paletteView, paletteParams);
 
-        TextView brightnessLabel = label(context, "亮度");
+        // 常用颜色快捷色块：黑色阴影要换成彩色阴影时，一次点击即可
+        LinearLayout swatchRow = new LinearLayout(context);
+        swatchRow.setOrientation(LinearLayout.HORIZONTAL);
+        swatchRow.setPadding(0, dp(context, 10), 0, 0);
+        final int[] presetColors = new int[]{
+                Color.WHITE, 0xFF000000, 0xFFFF3B30, 0xFFFF9500, 0xFFFFCC00,
+                0xFF34C759, 0xFF00C7BE, 0xFF32ADE6, 0xFF5856D6, 0xFFFF2D55
+        };
+        for (int preset : presetColors) {
+            View dot = new View(context);
+            GradientDrawable dotBg = new GradientDrawable();
+            dotBg.setShape(GradientDrawable.OVAL);
+            dotBg.setColor(preset);
+            dotBg.setStroke(dp(context, 1), 0x66FFFFFF);
+            dot.setBackground(dotBg);
+            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(context, 26), dp(context, 26));
+            dotLp.rightMargin = dp(context, 8);
+            swatchRow.addView(dot, dotLp);
+        }
+        root.addView(swatchRow, matchWrap());
+
+        final TextView brightnessLabel = label(context, "亮度：" + Math.round(paletteView.getValue() * 100) + "%");
         root.addView(brightnessLabel);
         SeekBar brightnessSeek = new SeekBar(context);
         brightnessSeek.setMax(100);
@@ -74,13 +107,37 @@ public final class ColorPickerDialog {
         final ColorState state = new ColorState(initialColor, allowAlpha);
         final UiRefresher refresher = new UiRefresher(preview, valueText, alphaLabel, allowAlpha, state);
 
+        // 色块点击后同步 SeekBar 与预览
+        for (int i = 0; i < swatchRow.getChildCount(); i++) {
+            final View dot = swatchRow.getChildAt(i);
+            final int preset = presetColors[i];
+            dot.setOnClickListener(v -> {
+                userChanged[0] = true;
+                paletteView.applyColor(preset);
+                brightnessSeek.setProgress(Math.round(paletteView.getValue() * 100));
+                brightnessLabel.setText("亮度：" + Math.round(paletteView.getValue() * 100) + "%");
+                state.setRgb(paletteView.getColor());
+                refresher.forceRefresh();
+            });
+        }
+
+        // 在调色板上取色时，如果原本亮度为 0（纯黑），自动抬到满亮度，
+        // 否则 HSVToColor(h, s, 0) 永远是黑色，用户会以为「只能选黑色」。
+        paletteView.setOnValueBumpedListener(value -> {
+            brightnessSeek.setProgress(Math.round(value * 100));
+            brightnessLabel.setText("亮度：" + Math.round(value * 100) + "%");
+        });
+
         paletteView.setOnColorChangedListener(color -> {
+            userChanged[0] = true;
             state.setRgb(color);
             refresher.requestLightRefresh();
         });
         brightnessSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 paletteView.setValue(progress / 100f, false);
+                brightnessLabel.setText("亮度：" + progress + "%");
+                if (fromUser) userChanged[0] = true;
                 state.setRgb(paletteView.getColor());
                 refresher.requestLightRefresh();
             }
@@ -92,6 +149,7 @@ public final class ColorPickerDialog {
         });
         alphaSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser) userChanged[0] = true;
                 state.setAlpha(progress);
                 refresher.requestLightRefresh();
             }
@@ -100,12 +158,25 @@ public final class ColorPickerDialog {
         });
         refresher.forceRefresh();
 
-        new AlertDialog.Builder(context)
+        // 放进 ScrollView，保证横竖屏下所有控件都可滚动到达；
+        // 外层再套手势屏蔽容器，防止打开弹窗的那次触摸把颜色"隔空"点掉。
+        TouchGuardLayout guard = new TouchGuardLayout(context);
+        guard.addView(root, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        ScrollView scrollView = new ScrollView(context);
+        scrollView.addView(guard, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        AlertDialog dialog = new AlertDialog.Builder(context)
                 .setTitle(title)
-                .setView(root)
+                .setView(scrollView)
                 .setNegativeButton("取消", null)
-                .setPositiveButton("确定", (dialog, which) -> listener.onColorPicked(colorToString(state.getColor(), allowAlpha)))
-                .show();
+                .setPositiveButton("确定", (d, which) -> listener.onColorPicked(
+                        userChanged[0] ? colorToString(state.getColor(), allowAlpha) : originalColorText))
+                .create();
+        dialog.setOnShowListener(d -> guard.arm());
+        dialog.show();
+        guard.arm();
     }
 
     private static class ColorState {
@@ -207,6 +278,8 @@ public final class ColorPickerDialog {
 
     private static class ColorPaletteView extends View {
         interface OnColorChangedListener { void onColorChanged(int color); }
+        /** 在调色板上取色导致亮度被自动抬起时回调，用于同步亮度 SeekBar。 */
+        interface OnValueBumpedListener { void onValueBumped(float value); }
 
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private Bitmap bitmap;
@@ -214,6 +287,7 @@ public final class ColorPickerDialog {
         private float saturation;
         private float value;
         private OnColorChangedListener listener;
+        private OnValueBumpedListener valueBumpedListener;
 
         ColorPaletteView(Context context, int initialColor) {
             super(context);
@@ -226,6 +300,21 @@ public final class ColorPickerDialog {
 
         void setOnColorChangedListener(OnColorChangedListener listener) {
             this.listener = listener;
+        }
+
+        void setOnValueBumpedListener(OnValueBumpedListener listener) {
+            this.valueBumpedListener = listener;
+        }
+
+        /** 由外部（快捷色块）直接设定颜色，会同步 V 并通知。 */
+        void applyColor(int color) {
+            float[] hsv = new float[3];
+            Color.colorToHSV(color, hsv);
+            hue = hsv[0];
+            saturation = hsv[1];
+            value = hsv[2];
+            invalidate();
+            notifyColor();
         }
 
         float getValue() {
@@ -262,7 +351,11 @@ public final class ColorPickerDialog {
         @Override protected void onDraw(Canvas canvas) {
             super.onDraw(canvas);
             if (bitmap != null) {
-                canvas.saveLayerAlpha(0, 0, getWidth(), getHeight(), Math.round(value * 255), Canvas.ALL_SAVE_FLAG);
+                // 亮度只用来「压暗」色域的观感，保留 35% 下限，
+                // 否则亮度为 0（纯黑初始色）时整个调色板会完全看不见。
+                float previewAlpha = 0.35f + 0.65f * value;
+                canvas.saveLayerAlpha(0, 0, getWidth(), getHeight(),
+                        Math.round(previewAlpha * 255), Canvas.ALL_SAVE_FLAG);
                 canvas.drawBitmap(bitmap, 0, 0, null);
                 canvas.restore();
             }
@@ -281,6 +374,12 @@ public final class ColorPickerDialog {
             if (event.getAction() == MotionEvent.ACTION_DOWN || event.getAction() == MotionEvent.ACTION_MOVE || event.getAction() == MotionEvent.ACTION_UP) {
                 hue = clamp(event.getX() / Math.max(1, getWidth() - 1), 0f, 1f) * 360f;
                 saturation = clamp(event.getY() / Math.max(1, getHeight() - 1), 0f, 1f);
+                // 关键修复：亮度为 0 时取任何色相都会得到黑色。
+                // 用户在色域上点选即代表「我要这个颜色」，此处把亮度抬到满值。
+                if (value <= 0.05f) {
+                    value = 1f;
+                    if (valueBumpedListener != null) valueBumpedListener.onValueBumped(value);
+                }
                 invalidate();
                 notifyColor();
                 return true;
