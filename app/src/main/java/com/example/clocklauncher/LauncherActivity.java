@@ -250,6 +250,18 @@ public class LauncherActivity extends AppCompatActivity {
             public void openLayoutEditor() {
                 startActivity(new Intent(LauncherActivity.this, DesktopLayoutEditActivity.class));
             }
+
+            @Override
+            public int getBrightnessPercent() {
+                return standbyClockView != null ? standbyClockView.getBrightnessPercent() : 70;
+            }
+
+            @Override
+            public void setBrightnessPercent(int percent) {
+                if (standbyClockView != null) {
+                    standbyClockView.setBrightnessPercent(percent);
+                }
+            }
         });
     }
 

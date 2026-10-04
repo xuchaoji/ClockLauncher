@@ -58,6 +58,12 @@ public final class DesktopSettingsDialog {
         void requestSetDefaultLauncher();
 
         void openLayoutEditor();
+
+        /** 读取当前屏幕亮度百分比（1~100）。 */
+        int getBrightnessPercent();
+
+        /** 直接设定屏幕亮度百分比（1~100）。 */
+        void setBrightnessPercent(int percent);
     }
 
     // ===== 配色 =====
@@ -143,6 +149,10 @@ public final class DesktopSettingsDialog {
         addEntry(column, "🌙", "夜间模式与护眼",
                 nightModeSummary(),
                 this::showNightModeDialog);
+
+        addEntry(column, "🖐️", "手势与屏幕亮度",
+                "亮度 " + host.getBrightnessPercent() + "% · 左侧上下滑动调亮度",
+                this::showGestureDialog);
 
         addEntry(column, "🎛️", "排版布局与预设",
                 DesktopConfig.hasPosition(prefs, DesktopConfig.COMPONENT_CLOCK)
@@ -554,7 +564,69 @@ public final class DesktopSettingsDialog {
     }
 
     // ==================================================================
-    //  6. 排版布局与预设
+    //  6. 手势与屏幕亮度
+    // ==================================================================
+    private void showGestureDialog() {
+        LinearLayout column = column();
+        column.addView(titleView("🖐️ 手势与屏幕亮度"));
+        column.addView(tipView("亮度按窗口生效，只影响本桌面，不会改动系统全局亮度。"));
+        column.addView(tipView("在桌面左侧约 1/6 宽度的区域内上下滑动，即可快速无级调节亮度。"));
+
+        column.addView(sectionView("屏幕亮度"));
+        final int[] brightnessHolder = new int[]{host.getBrightnessPercent()};
+        TextView valueView = statusView("当前亮度：" + brightnessHolder[0] + "%");
+        valueView.setTextColor(COLOR_ACCENT);
+        column.addView(valueView);
+
+        LinearLayout sliderBox = new LinearLayout(context);
+        sliderBox.setOrientation(LinearLayout.VERTICAL);
+        SeekBar seek = new SeekBar(context);
+        seek.setMax(99);
+        seek.setProgress(Math.max(0, Math.min(99, brightnessHolder[0] - 1)));
+        seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (!fromUser) return;
+                int percent = progress + 1;
+                brightnessHolder[0] = percent;
+                valueView.setText("当前亮度：" + percent + "%");
+                host.setBrightnessPercent(percent);
+            }
+
+            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
+
+            @Override public void onStopTrackingTouch(SeekBar seekBar) { }
+        });
+        sliderBox.addView(seek);
+        column.addView(sliderBox);
+
+        LinearLayout quickRow = row();
+        quickRow.addView(button("🔆 100%", false, v -> {
+            host.setBrightnessPercent(100);
+            seek.setProgress(99);
+        }));
+        quickRow.addView(button("🔅 50%", false, v -> {
+            host.setBrightnessPercent(50);
+            seek.setProgress(49);
+        }));
+        quickRow.addView(button("🌙 10%", false, v -> {
+            host.setBrightnessPercent(10);
+            seek.setProgress(9);
+        }));
+        column.addView(quickRow);
+
+        column.addView(sectionView("桌面手势一览"));
+        column.addView(tipView("· 右滑 / 左滑 / 上滑：呼出应用列表"));
+        column.addView(tipView("· 左侧上下滑动：调节屏幕亮度"));
+        column.addView(tipView("· 双击桌面空白处：快速切换夜间模式"));
+        column.addView(tipView("· 长按桌面空白处：打开本设置中心"));
+        column.addView(tipView("· 轻触天气卡片：切换三日 / 逐小时视图"));
+
+        showDarkDialog("手势与屏幕亮度", column, null, null);
+    }
+
+    // ==================================================================
+    //  7. 排版布局与预设
     // ==================================================================
     private void showLayoutDialog() {
         LinearLayout column = column();

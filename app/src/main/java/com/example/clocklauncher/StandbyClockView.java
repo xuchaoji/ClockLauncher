@@ -735,23 +735,52 @@ public class StandbyClockView extends FrameLayout {
         });
     }
 
+    /** 左侧亮度手势感应区宽度：取屏宽 1/6 与 80dp 的较大值，保证单手也能轻松够到。 */
+    private int brightnessZoneWidth() {
+        return Math.max(dp(80), getWidth() / 6);
+    }
+
     @Override
     public boolean onInterceptTouchEvent(MotionEvent ev) {
-        int leftZone = dp(48);
-        if (ev.getAction() == MotionEvent.ACTION_MOVE && ev.getX() <= leftZone) {
-            float dy = Math.abs(ev.getY() - touchDownY);
-            float dx = Math.abs(ev.getX() - touchDownX);
-            if (dy > dx && dy > dp(10)) {
-                getParent().requestDisallowInterceptTouchEvent(true);
-                return true;
-            }
+        int touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        switch (ev.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                // 在拦截阶段就记录起点：子 View（天气卡片等）可能吞掉 DOWN，
+                // 那样 onTouchEvent 永远收不到 DOWN，亮度手势就会失效。
+                touchDownX = ev.getX();
+                touchDownY = ev.getY();
+                brightnessStartValue = currentBrightness();
+                brightnessGesture = false;
+                gestureDetermined = false;
+                movedDuringTouch = false;
+                break;
+
+            case MotionEvent.ACTION_MOVE:
+                if (!gestureDetermined && touchDownX <= brightnessZoneWidth()) {
+                    float dx = Math.abs(ev.getX() - touchDownX);
+                    float dy = Math.abs(ev.getY() - touchDownY);
+                    // 大幅上滑优先判定为「呼出应用列表」，不在左区抢事件
+                    boolean upwardFling = (ev.getY() - touchDownY) < -dp(70);
+                    // 起手就是纵向滑动 => 判定为调节亮度，从子 View 手里抢过事件流
+                    if (!upwardFling && dy > touchSlop && dy > dx * 1.2f) {
+                        brightnessGesture = true;
+                        gestureDetermined = true;
+                        handler.removeCallbacks(longPressSettingsRunnable);
+                        getParent().requestDisallowInterceptTouchEvent(true);
+                        return true;
+                    }
+                }
+                break;
+
+            default:
+                break;
         }
         return super.onInterceptTouchEvent(ev);
     }
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        int leftZone = dp(48);
+        int leftZone = brightnessZoneWidth();
         int touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
@@ -926,7 +955,23 @@ public class StandbyClockView extends FrameLayout {
         if (nightModeActive) {
             hintView.setText("🌙 夜间待机 (" + Math.max(1, percent) + "%) · 双击退出 · 右滑应用列表");
         } else {
-            hintView.setText("👉 右滑显示应用列表  |  长按桌面设置");
+            hintView.setText("👉 右滑应用列表  ·  左侧上下滑动调亮度 (" + Math.max(1, percent) + "%)  ·  长按设置");
+        }
+    }
+
+    /** 供设置面板等外部读取当前亮度百分比。 */
+    public int getBrightnessPercent() {
+        return Math.max(1, Math.round(currentBrightness() * 100));
+    }
+
+    /** 供设置面板直接设定亮度。 */
+    public void setBrightnessPercent(int percent) {
+        float value = clamp(percent / 100f, 0.01f, 1f);
+        if (nightModeActive) {
+            prefs.edit().putInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, Math.max(1, percent)).apply();
+            setBrightnessInternal(value);
+        } else {
+            setBrightness(value);
         }
     }
 

@@ -11,6 +11,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 
@@ -60,6 +61,16 @@ public class CpuMonitorView extends View {
     private boolean[] coreIsBig;
     private boolean topologyLogged;
 
+    /**
+     * 物理核心的 CPU id 列表（如 8 核就是 0..7）。
+     * 注意：不能用 {@code Runtime.availableProcessors()} 当核心总数——
+     * 它返回的是「本进程当前可用的核」，会被 ROM 的 cpuset/cgroup 限制
+     * 以及内核热插拔（部分核心 offline）影响，常见表现就是 8 核机器只显示 4 个核。
+     */
+    private int[] cpuIds;
+    /** 与 {@link #cpuIds} 一一对应的在线状态；离线核心无频率可读，仅灰显占位。 */
+    private boolean[] cpuOnline;
+
     public CpuMonitorView(Context context) {
         super(context);
         paint.setStrokeCap(Paint.Cap.ROUND);
@@ -71,6 +82,7 @@ public class CpuMonitorView extends View {
     }
 
     public void sample() {
+        ensureTopology();
         if (dataSource == SOURCE_UNKNOWN) detectDataSource();
         sampleCpuTemperature();
 
@@ -98,6 +110,132 @@ public class CpuMonitorView extends View {
         updateAccessibilitySummary(values);
         logSample(values);
         invalidate();
+    }
+
+    // ---------------------------------------------------------------- 核心拓扑
+
+    /**
+     * 解析物理核心列表。优先级：
+     * 1) /sys/devices/system/cpu/possible —— 内核声明的全部 CPU（最权威，含当前离线核）
+     * 2) /sys/devices/system/cpu/present
+     * 3) 扫描 /sys/devices/system/cpu/cpuN 目录
+     * 4) Runtime.availableProcessors() 兜底（会被 cpuset 限制，仅作最后手段）
+     */
+    private void ensureTopology() {
+        if (cpuIds != null && cpuIds.length > 0) {
+            refreshOnlineFlags();
+            return;
+        }
+        int[] ids = parseCpuList(readTextFile("/sys/devices/system/cpu/possible"));
+        String source = "possible";
+        if (ids.length == 0) {
+            ids = parseCpuList(readTextFile("/sys/devices/system/cpu/present"));
+            source = "present";
+        }
+        if (ids.length == 0) {
+            ids = scanCpuDirs();
+            source = "目录扫描";
+        }
+        if (ids.length == 0) {
+            int n = Math.max(1, Runtime.getRuntime().availableProcessors());
+            ids = new int[n];
+            for (int i = 0; i < n; i++) ids[i] = i;
+            source = "availableProcessors(降级)";
+        }
+        cpuIds = ids;
+        coreCount = ids.length;
+        cpuOnline = new boolean[ids.length];
+        refreshOnlineFlags();
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ids.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append('C').append(ids[i]);
+        }
+        Log.i(TAG, "CPU核心拓扑：共 " + ids.length + " 核 [" + sb + "] 来源=" + source
+                + " 在线=" + onlineCount() + " 进程可见=" + Runtime.getRuntime().availableProcessors());
+    }
+
+    /** 解析内核 cpu 列表格式，如 "0-7" 或 "0-3,4-7"，返回展开后的 id 数组。 */
+    private int[] parseCpuList(String content) {
+        if (content == null || content.trim().isEmpty()) return new int[0];
+        List<Integer> ids = new ArrayList<>();
+        for (String part : content.trim().split(",")) {
+            String token = part.trim();
+            if (token.isEmpty()) continue;
+            int dash = token.indexOf('-');
+            try {
+                if (dash > 0) {
+                    int from = Integer.parseInt(token.substring(0, dash).trim());
+                    int to = Integer.parseInt(token.substring(dash + 1).trim());
+                    if (from < 0 || to < from || to > 1024) continue;
+                    for (int i = from; i <= to; i++) ids.add(i);
+                } else {
+                    ids.add(Integer.parseInt(token));
+                }
+            } catch (NumberFormatException ignored) {
+                // 忽略异常 token
+            }
+        }
+        if (ids.isEmpty()) return new int[0];
+        int[] result = new int[ids.size()];
+        for (int i = 0; i < result.length; i++) result[i] = ids.get(i);
+        return result;
+    }
+
+    /** 兜底：直接扫描 /sys/devices/system/cpu/cpuN 目录。 */
+    private int[] scanCpuDirs() {
+        File root = new File("/sys/devices/system/cpu");
+        File[] children = root.listFiles();
+        if (children == null) return new int[0];
+        List<Integer> ids = new ArrayList<>();
+        for (File child : children) {
+            if (child == null) continue;
+            String name = child.getName();
+            if (!name.startsWith("cpu")) continue;
+            try {
+                ids.add(Integer.parseInt(name.substring(3)));
+            } catch (NumberFormatException ignored) {
+                // cpufreq / cpuidle 等非核心目录
+            }
+        }
+        if (ids.isEmpty()) return new int[0];
+        Collections.sort(ids);
+        int[] result = new int[ids.size()];
+        for (int i = 0; i < result.length; i++) result[i] = ids.get(i);
+        return result;
+    }
+
+    /** 读取每个核心的 online 状态；cpu0 通常没有 online 节点，视为常在线。 */
+    private void refreshOnlineFlags() {
+        if (cpuIds == null) return;
+        if (cpuOnline == null || cpuOnline.length != cpuIds.length) {
+            cpuOnline = new boolean[cpuIds.length];
+        }
+        for (int i = 0; i < cpuIds.length; i++) {
+            cpuOnline[i] = isCoreOnline(cpuIds[i]);
+        }
+    }
+
+    private boolean isCoreOnline(int cpuId) {
+        String content = readTextFile("/sys/devices/system/cpu/cpu" + cpuId + "/online");
+        if (content == null) return true; // 无该节点 => 不可热插拔 => 常在线
+        try {
+            return Long.parseLong(content.trim()) != 0L;
+        } catch (NumberFormatException e) {
+            return true;
+        }
+    }
+
+    private int onlineCount() {
+        if (cpuOnline == null) return 0;
+        int n = 0;
+        for (boolean online : cpuOnline) if (online) n++;
+        return n;
+    }
+
+    private boolean isOnlineAt(int index) {
+        return cpuOnline == null || index < 0 || index >= cpuOnline.length || cpuOnline[index];
     }
 
     // ---------------------------------------------------------------- 数据源探测
@@ -136,7 +274,7 @@ public class CpuMonitorView extends View {
 
     // ---------------------------------------------------------------- 三级采样
 
-    /** 1) /proc/stat 累计计数差分 = 真实占用率。 */
+    /** 1) /proc/stat 累计计数差分 = 真实占用率。按 CPU id 对齐物理核心。 */
     private float[] sampleFromStat() {
         long[][] stats = readProcStat();
         if (stats == null || stats.length == 0) return null;
@@ -144,39 +282,62 @@ public class CpuMonitorView extends View {
             lastStats = stats;
             return null;
         }
-        float[] values = new float[stats.length];
-        for (int i = 0; i < stats.length; i++) {
-            long totalDelta = Math.max(1, stats[i][0] - lastStats[i][0]);
-            long idleDelta = Math.max(0, stats[i][1] - lastStats[i][1]);
+        float[] values = new float[coreCount];
+        for (int i = 0; i < coreCount; i++) {
+            long[] now = statRow(stats, i);
+            long[] prev = statRow(lastStats, i);
+            if (now == null || prev == null) {
+                values[i] = 0f; // 离线核心：无 /proc/stat 行
+                continue;
+            }
+            long totalDelta = Math.max(1, now[0] - prev[0]);
+            long idleDelta = Math.max(0, now[1] - prev[1]);
             values[i] = clamp01(1f - idleDelta / (float) totalDelta);
         }
         lastStats = stats;
         return values;
     }
 
+    /** 按核心序号取出该 CPU 的 stat 行；索引越界或该核离线时返回 null。 */
+    private long[] statRow(long[][] stats, int coreIndex) {
+        if (stats == null || coreIndex < 0 || coreIndex >= stats.length) return null;
+        return stats[coreIndex];
+    }
+
     /**
      * 2) time_in_state 差分求窗口平均频率，再归一化到 0..1 作为曲线高度。
      * 注意：这是**频率**，不是占用率。
+     * 单核读取失败（离线或该核没有 time_in_state 节点）只跳过该核，不再让整块面板变空。
      */
     private float[] sampleFromTimeInState() {
-        int count = Runtime.getRuntime().availableProcessors();
-        if (count <= 0) return null;
+        if (coreCount <= 0) return null;
         List<long[]> freqs = new ArrayList<>();
         List<long[]> times = new ArrayList<>();
-        for (int i = 0; i < count; i++) {
-            long[][] table = readTimeInState(i);
-            if (table == null) return null;
+        int readable = 0;
+        for (int i = 0; i < coreCount; i++) {
+            long[][] table = isOnlineAt(i) ? readTimeInState(cpuIds[i]) : null;
+            if (table == null) {
+                freqs.add(null);
+                times.add(null);
+                continue;
+            }
             freqs.add(table[0]);
             times.add(table[1]);
+            readable++;
         }
-        if (tisTimes == null || tisTimes.size() != times.size()) {
-            tisTimes = times;
-            return null;
-        }
-        float[] values = new float[count];
-        double[] khz = new double[count];
-        for (int i = 0; i < count; i++) {
+        if (readable == 0) return null;
+
+        boolean seeded = tisTimes != null && tisTimes.size() == times.size();
+        float[] values = new float[coreCount];
+        double[] khz = new double[coreCount];
+        for (int i = 0; i < coreCount; i++) {
             long[] f = freqs.get(i);
+            long[] prev = seeded ? tisTimes.get(i) : null;
+            long[] now = times.get(i);
+            if (f == null || now == null) {
+                values[i] = 0f;
+                continue;
+            }
             long min = Long.MAX_VALUE;
             long max = 0L;
             for (long v : f) {
@@ -185,27 +346,28 @@ public class CpuMonitorView extends View {
                     max = Math.max(max, v);
                 }
             }
-            double avg = averageFreq(f, tisTimes.get(i), times.get(i));
+            double avg = (prev == null) ? 0d : averageFreq(f, prev, now);
             khz[i] = avg;
             values[i] = (min == Long.MAX_VALUE || max <= min || avg <= 0)
                     ? 0f : clamp01((float) ((avg - min) / (double) (max - min)));
         }
         tisTimes = times;
         curFreqKhz = khz;
+        if (!seeded) return null; // 首帧只建立基线
         return values;
     }
 
     /** 3) 兜底：直接用 scaling_cur_freq 的瞬时频率。 */
     private float[] sampleFromCurFreq() {
-        int count = Runtime.getRuntime().availableProcessors();
-        if (count <= 0) return null;
-        float[] values = new float[count];
-        double[] khz = new double[count];
+        if (coreCount <= 0) return null;
+        float[] values = new float[coreCount];
+        double[] khz = new double[coreCount];
         boolean any = false;
-        for (int i = 0; i < count; i++) {
-            long cur = readLongFile(freqPath(i, "scaling_cur_freq"));
-            long max = readLongFile(freqPath(i, "cpuinfo_max_freq"));
-            long min = readLongFile(freqPath(i, "cpuinfo_min_freq"));
+        for (int i = 0; i < coreCount; i++) {
+            if (!isOnlineAt(i)) continue;
+            long cur = readLongFile(freqPath(cpuIds[i], "scaling_cur_freq"));
+            long max = readLongFile(freqPath(cpuIds[i], "cpuinfo_max_freq"));
+            long min = readLongFile(freqPath(cpuIds[i], "cpuinfo_min_freq"));
             if (cur > 0 && max > 0) {
                 if (min <= 0 || min >= max) min = 0;
                 khz[i] = cur;
@@ -233,9 +395,16 @@ public class CpuMonitorView extends View {
 
     // ---------------------------------------------------------------- 读取工具
 
+    /**
+     * 读取 /proc/stat 的每核累计计数。
+     * 返回数组按「物理核心序号」对齐（下标 i 对应 cpuIds[i]），
+     * 这样即使内核只暴露部分核心，也不会把 cpu4 的数据错位显示成 cpu0。
+     */
     private long[][] readProcStat() {
-        List<long[]> result = new ArrayList<>();
+        if (cpuIds == null || cpuIds.length == 0) return null;
+        long[][] result = new long[cpuIds.length][];
         BufferedReader br = null;
+        int found = 0;
         try {
             br = new BufferedReader(new FileReader("/proc/stat"));
             String line;
@@ -244,6 +413,14 @@ public class CpuMonitorView extends View {
                 String[] parts = line.trim().split("\\s+");
                 if (parts.length < 5 || parts[0].length() <= 3) continue;
                 if (!Character.isDigit(parts[0].charAt(3))) continue;
+                int cpuId;
+                try {
+                    cpuId = Integer.parseInt(parts[0].substring(3));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                int slot = indexOfCpu(cpuId);
+                if (slot < 0) continue;
                 long user = parse(parts, 1);
                 long nice = parse(parts, 2);
                 long system = parse(parts, 3);
@@ -254,14 +431,23 @@ public class CpuMonitorView extends View {
                 long steal = parse(parts, 8);
                 long idleAll = idle + iowait;
                 long total = user + nice + system + idle + iowait + irq + softirq + steal;
-                result.add(new long[]{total, idleAll});
+                result[slot] = new long[]{total, idleAll};
+                found++;
             }
         } catch (Throwable ignored) {
             return null;
         } finally {
             close(br);
         }
-        return result.isEmpty() ? null : result.toArray(new long[result.size()][]);
+        return found == 0 ? null : result;
+    }
+
+    private int indexOfCpu(int cpuId) {
+        if (cpuIds == null) return -1;
+        for (int i = 0; i < cpuIds.length; i++) {
+            if (cpuIds[i] == cpuId) return i;
+        }
+        return -1;
     }
 
     /** 返回 {freqs, times}；读不到返回 null。 */
@@ -389,15 +575,16 @@ public class CpuMonitorView extends View {
     // ---------------------------------------------------------------- 大小核识别
 
     private void ensureCoreInfo() {
-        if (coreCount <= 0) return;
+        if (coreCount <= 0 || cpuIds == null) return;
         if (coreOrder != null && coreOrder.length == coreCount
                 && coreMaxFreqs != null && coreMaxFreqs.length == coreCount) {
             return;
         }
         coreMaxFreqs = new long[coreCount];
         for (int i = 0; i < coreCount; i++) {
-            long max = readLongFile(freqPath(i, "cpuinfo_max_freq"));
-            if (max <= 0) max = readLongFile(freqPath(i, "scaling_max_freq"));
+            int cpuId = cpuIds[i];
+            long max = readLongFile(freqPath(cpuId, "cpuinfo_max_freq"));
+            if (max <= 0) max = readLongFile(freqPath(cpuId, "scaling_max_freq"));
             coreMaxFreqs[i] = max;
         }
         classifyBigLittle();
@@ -515,11 +702,14 @@ public class CpuMonitorView extends View {
         StringBuilder sb = new StringBuilder("CPU监控[")
                 .append(dataSource == SOURCE_STAT ? "占用率"
                         : dataSource == SOURCE_TIME_IN_STATE ? "频率/窗口平均" : "频率/瞬时")
-                .append("]：");
-        for (int i = 0; i < Math.min(values.length, 8); i++) {
+                .append("](").append(onlineCount()).append('/').append(coreCount).append("核在线)：");
+        for (int i = 0; i < values.length; i++) {
             if (i > 0) sb.append(' ');
-            sb.append('C').append(i).append('=');
-            if (isFreqMode() && curFreqKhz != null && i < curFreqKhz.length && curFreqKhz[i] > 0) {
+            String coreName = "C" + (cpuIds != null && i < cpuIds.length ? cpuIds[i] : i);
+            sb.append(coreName).append('=');
+            if (!isOnlineAt(i)) {
+                sb.append("离线");
+            } else if (isFreqMode() && curFreqKhz != null && i < curFreqKhz.length && curFreqKhz[i] > 0) {
                 sb.append(String.format(Locale.US, "%.2fG", curFreqKhz[i] / 1_000_000d));
             } else {
                 sb.append(Math.round(values[i] * 100)).append('%');
@@ -611,25 +801,30 @@ public class CpuMonitorView extends View {
     }
 
     private void drawCore(Canvas canvas, int core, float x, float y, float width, float height, boolean wide) {
+        boolean online = isOnlineAt(core);
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(Color.argb(42, 255, 255, 255));
+        paint.setColor(online ? Color.argb(42, 255, 255, 255) : Color.argb(20, 255, 255, 255));
         canvas.drawRoundRect(x, y, x + width, y + height, dp(6), dp(6), paint);
 
         float current = latestValue(core);
         paint.setTextSize(wide ? dp(9) : dp(8));
-        paint.setColor(Color.argb(200, 255, 255, 255));
-        // 占用率模式显示「上限 百分比」；频率模式显示「当前/上限」——不把频率冒充成占用率
+        paint.setColor(online ? Color.argb(200, 255, 255, 255) : Color.argb(110, 255, 255, 255));
+
+        String coreName = "C" + (cpuIds != null && core < cpuIds.length ? cpuIds[core] : core);
         String label;
-        if (isFreqMode()) {
+        if (!online) {
+            label = coreName + " 离线";
+        } else if (isFreqMode()) {
+            // 频率模式显示「当前/上限」——不把频率冒充成占用率
             double cur = (curFreqKhz != null && core < curFreqKhz.length) ? curFreqKhz[core] : 0d;
             long max = (coreMaxFreqs != null && core < coreMaxFreqs.length) ? coreMaxFreqs[core] : 0L;
-            label = (cur > 0 ? ghz(cur) : "?") + "/" + (max > 0 ? ghz(max) : "?") + "G";
+            label = coreName + " " + (cur > 0 ? ghz(cur) : "?") + "/" + (max > 0 ? ghz(max) : "?") + "G";
         } else {
-            label = freqText(core) + " " + Math.round(current * 100) + "%";
+            label = coreName + " " + freqText(core) + " " + Math.round(current * 100) + "%";
         }
         canvas.drawText(label, x + dp(4), y + dp(10), paint);
 
-        if (history.size() < 2) return;
+        if (!online || history.size() < 2) return;
         float graphLeft = x + dp(3);
         float graphRight = x + width - dp(3);
         float graphTop = y + dp(13);
