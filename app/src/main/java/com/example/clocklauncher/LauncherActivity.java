@@ -35,6 +35,12 @@ import androidx.viewpager2.widget.ViewPager2;
  */
 public class LauncherActivity extends AppCompatActivity {
     private static final int REQUEST_ROLE_HOME = 1001;
+    /** 待机桌面时钟页（默认页，全屏）。 */
+    private static final int PAGE_CLOCK = 1;
+    /** 应用列表页（显示状态栏）。 */
+    private static final int PAGE_DRAWER = 0;
+    /** 应用列表页状态栏配色，与列表头部渐变起始色保持一致。 */
+    private static final int DRAWER_STATUS_BAR_COLOR = 0xFF1B2232;
 
     private ViewPager2 viewPager;
     private StandbyClockView standbyClockView;
@@ -69,11 +75,54 @@ public class LauncherActivity extends AppCompatActivity {
         Window window = getWindow();
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if (Build.VERSION.SDK_INT >= 21) {
-            window.getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-            window.setStatusBarColor(Color.TRANSPARENT);
             window.setNavigationBarColor(Color.BLACK);
         }
+        // 允许窗口铺满刘海/挖孔区域，否则竖屏顶部(或横屏侧边)会留下一条 108px 的非内容带，
+        // 桌面就不是真正的"全屏"了。
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = window.getAttributes();
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            window.setAttributes(lp);
+        }
+        applySystemUiForPage(PAGE_CLOCK);
+    }
+
+    /**
+     * 按当前页切换系统栏显示策略：
+     * · 待机时钟页（默认桌面）：真·全屏，隐藏状态栏与导航栏，时钟完全铺满整块屏幕
+     * · 应用列表页：显示状态栏（内容仍绘制到状态栏下方，由列表头部留出让位空间）
+     */
+    private void applySystemUiForPage(int page) {
+        if (Build.VERSION.SDK_INT < 21) return;
+        Window window = getWindow();
+        View decor = window.getDecorView();
+        if (page == PAGE_CLOCK) {
+            decor.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                            | View.SYSTEM_UI_FLAG_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+            window.setStatusBarColor(Color.TRANSPARENT);
+            window.setNavigationBarColor(Color.TRANSPARENT);
+        } else {
+            decor.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+            window.setStatusBarColor(DRAWER_STATUS_BAR_COLOR);
+            window.setNavigationBarColor(Color.BLACK);
+        }
+    }
+
+    /** 状态栏高度（像素）：优先取系统资源，取不到时退回 24dp。 */
+    private int statusBarHeightPx() {
+        int resId = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        if (resId > 0) {
+            return getResources().getDimensionPixelSize(resId);
+        }
+        return Math.round(24 * getResources().getDisplayMetrics().density);
     }
 
     private void setupListeners() {
@@ -118,10 +167,44 @@ public class LauncherActivity extends AppCompatActivity {
         viewPager.setOrientation(ViewPager2.ORIENTATION_HORIZONTAL);
         viewPager.setAdapter(new LauncherPagerAdapter());
 
+        // 页面切换时同步系统栏策略：时钟页全屏、应用列表页显示状态栏
+        viewPager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
+            @Override
+            public void onPageSelected(int position) {
+                applySystemUiForPage(position);
+            }
+
+            @Override
+            public void onPageScrollStateChanged(int state) {
+                // 拖动结束时再校正一次，避免滑动过程中状态栏闪烁残留
+                if (state == ViewPager2.SCROLL_STATE_IDLE && viewPager != null) {
+                    applySystemUiForPage(viewPager.getCurrentItem());
+                }
+            }
+        });
+
         // 默认显示 Page 1: 待机桌面时钟
-        viewPager.setCurrentItem(1, false);
+        viewPager.setCurrentItem(PAGE_CLOCK, false);
 
         setContentView(viewPager);
+
+        // 应用列表头部按真实状态栏高度留出让位空间（横竖屏/刘海屏都适配）
+        if (appDrawerView != null) {
+            appDrawerView.setStatusBarInset(statusBarHeightPx());
+        }
+        applySystemUiForPage(PAGE_CLOCK);
+    }
+
+    /**
+     * 沉浸式全屏会被系统在弹出状态栏后清除（IMMERSIVE_STICKY 需要重新声明），
+     * 重新拿到焦点时按当前页再校正一次。
+     */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus && viewPager != null) {
+            applySystemUiForPage(viewPager.getCurrentItem());
+        }
     }
 
     @Override

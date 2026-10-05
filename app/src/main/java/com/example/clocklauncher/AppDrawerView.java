@@ -92,6 +92,21 @@ public class AppDrawerView extends LinearLayout {
     private float touchDownX;
     private float touchDownY;
 
+    /** 状态栏高度（像素）；应用列表页会显示状态栏，头部需按此留出让位空间。 */
+    private int statusBarInset = 0;
+    private LinearLayout headerContainer;
+
+    /**
+     * 设置状态栏让位高度。应用列表页显示状态栏时，头部内容需要下移，
+     * 否则搜索框会被状态栏压住。
+     */
+    public void setStatusBarInset(int insetPx) {
+        this.statusBarInset = Math.max(0, insetPx);
+        if (headerContainer != null) {
+            headerContainer.setPadding(dp(16), statusBarInset + dp(12), dp(16), dp(10));
+        }
+    }
+
     public AppDrawerView(@NonNull Context context) {
         this(context, null);
     }
@@ -122,10 +137,11 @@ public class AppDrawerView extends LinearLayout {
         // 顶部搜索与操作容器
         LinearLayout header = new LinearLayout(getContext());
         header.setOrientation(VERTICAL);
-        header.setPadding(dp(16), dp(44), dp(16), dp(10));
+        header.setPadding(dp(16), statusBarInset > 0 ? statusBarInset + dp(12) : dp(44), dp(16), dp(10));
         GradientDrawable headerBg = new GradientDrawable();
         headerBg.setColors(new int[]{Color.parseColor("#1B2232"), Color.parseColor("#0C101A")});
         header.setBackground(headerBg);
+        headerContainer = header;
 
         // 第 1 行：返回时钟按钮 + 搜索框 + 菜单
         LinearLayout searchRow = new LinearLayout(getContext());
