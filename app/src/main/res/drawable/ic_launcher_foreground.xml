@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 表盘图标：外圈 + 时针/分针 + 中心点，全部落在自适应图标安全区内 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 表盘外圈 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#8AB4FF"
+        android:strokeWidth="4"
+        android:pathData="M54,54m-25,0a25,25 0 1,0 50,0a25,25 0 1,0 -50,0" />
+
+    <!-- 12 / 3 / 6 / 9 时刻刻度 -->
+    <path android:fillColor="#8AB4FF" android:pathData="M52.5,27h3v5h-3z" />
+    <path android:fillColor="#8AB4FF" android:pathData="M76,52.5h5v3h-5z" />
+    <path android:fillColor="#8AB4FF" android:pathData="M52.5,76h3v5h-3z" />
+    <path android:fillColor="#8AB4FF" android:pathData="M27,52.5h5v3h-5z" />
+
+    <!-- 时针 -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M54,54L54,39" />
+
+    <!-- 分针 -->
+    <path
+        android:strokeColor="#64B5F6"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M54,54L67,61" />
+
+    <!-- 中心点 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,54m-3.5,0a3.5,3.5 0 1,0 7,0a3.5,3.5 0 1,0 -7,0" />
+</vector>

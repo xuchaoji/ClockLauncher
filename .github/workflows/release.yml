@@ -1,0 +1,82 @@
+name: Release APK
+
+# 推 v* 标签时自动构建 APK，并挂到对应的 GitHub Release 上
+on:
+  push:
+    tags:
+      - 'v*'
+  # 也可以在 Actions 页面手动触发，用于测试流水线
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # 必须空格分隔成一行；写成多行 YAML 会被当成一个含换行的包名而失败
+          packages: 'platforms;android-35 build-tools;35.0.0'
+          accept-android-sdk-licenses: true
+
+      - name: Gradle info
+        run: |
+          chmod +x gradlew
+          ./gradlew --version
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          ls "$ANDROID_SDK_ROOT/platforms" || true
+          ls "$ANDROID_SDK_ROOT/build-tools" || true
+
+      - name: Build APK
+        id: build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            echo "==> 使用自有签名证书构建 release APK"
+            printf '%s' "$KEYSTORE_BASE64" | base64 -d > release.jks
+            {
+              echo "storeFile=release.jks"
+              echo "storePassword=$KEYSTORE_PASSWORD"
+              echo "keyAlias=$KEY_ALIAS"
+              echo "keyPassword=$KEY_PASSWORD"
+            } > keystore.properties
+            ./gradlew --no-daemon --stacktrace assembleRelease
+            APK=app/build/outputs/apk/release/app-release.apk
+          else
+            echo "==> 未配置签名密钥，回退为 debug APK"
+            ./gradlew --no-daemon --stacktrace assembleDebug
+            APK=app/build/outputs/apk/debug/app-debug.apk
+          fi
+          test -f "$APK"
+          cp "$APK" "ClockLauncher-${GITHUB_REF_NAME}.apk"
+          sha256sum "ClockLauncher-${GITHUB_REF_NAME}.apk" | tee SHA256SUMS.txt
+          echo "apk=ClockLauncher-${GITHUB_REF_NAME}.apk" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            ClockLauncher-${{ github.ref_name }}.apk
+            SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
