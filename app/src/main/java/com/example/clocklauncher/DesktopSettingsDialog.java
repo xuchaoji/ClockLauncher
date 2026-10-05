@@ -62,8 +62,17 @@ public final class DesktopSettingsDialog {
         /** 读取当前屏幕亮度百分比（1~100）。 */
         int getBrightnessPercent();
 
-        /** 直接设定屏幕亮度百分比（1~100）。 */
+        /** 直接设定屏幕亮度百分比（1~100），会切回手动模式。 */
         void setBrightnessPercent(int percent);
+
+        /** 让桌面重新按当前亮度模式接管亮度（注册/注销环境光监听）。 */
+        void refreshBrightnessStatus();
+
+        /** 亮度模式与当前环境光的文字摘要。 */
+        String getBrightnessStatusText();
+
+        /** 本机是否有环境光传感器。 */
+        boolean hasLightSensor();
     }
 
     // ===== 配色 =====
@@ -570,9 +579,76 @@ public final class DesktopSettingsDialog {
         LinearLayout column = column();
         column.addView(titleView("🖐️ 手势与屏幕亮度"));
         column.addView(tipView("亮度按窗口生效，只影响本桌面，不会改动系统全局亮度。"));
-        column.addView(tipView("在桌面左侧约 1/6 宽度的区域内上下滑动，即可快速无级调节亮度。"));
 
-        column.addView(sectionView("屏幕亮度"));
+        // ---------- 亮度模式 ----------
+        column.addView(sectionView("亮度模式"));
+        final TextView modeStatus = statusView(host.getBrightnessStatusText());
+        modeStatus.setTextColor(COLOR_ACCENT);
+        column.addView(modeStatus);
+
+        Spinner modeSpinner = new Spinner(context);
+        final String[] modeNames = new String[]{
+                "✋ 手动亮度（手势 / 滑块）",
+                "🔆 自动亮度（跟随环境光）",
+                "📱 跟随系统亮度"
+        };
+        modeSpinner.setAdapter(new ArrayAdapter<>(context,
+                android.R.layout.simple_spinner_dropdown_item, modeNames));
+        modeSpinner.setSelection(Math.max(0, Math.min(2,
+                prefs.getInt(DesktopConfig.KEY_BRIGHTNESS_MODE, DesktopConfig.BRIGHTNESS_MODE_MANUAL))));
+        modeSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                prefs.edit().putInt(DesktopConfig.KEY_BRIGHTNESS_MODE, position).apply();
+                refresh();
+                host.refreshBrightnessStatus();
+                modeStatus.setText(host.getBrightnessStatusText());
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+        });
+        column.addView(modeSpinner);
+        column.addView(tipView("自动亮度按环境光对数映射到亮度，再做低通滤波避免闪烁；"
+                + "夜间模式期间自动亮度让位，退出后自动恢复。"));
+        if (!host.hasLightSensor()) {
+            TextView noSensor = statusView("⚠️ 本机未检测到环境光传感器，自动亮度不可用，将保持手动亮度。");
+            noSensor.setTextColor(COLOR_WARN);
+            column.addView(noSensor);
+        }
+
+        // ---------- 自动亮度范围 ----------
+        column.addView(sectionView("自动亮度范围"));
+        column.addView(seekRow("最暗时亮度（0 lux）", 1, 60,
+                prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MIN, DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MIN), "%",
+                value -> {
+                    prefs.edit().putInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MIN, value).apply();
+                    // 保证最暗档不超过最亮档
+                    int max = prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MAX,
+                            DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MAX);
+                    if (max <= value) {
+                        prefs.edit().putInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MAX,
+                                Math.min(100, value + 10)).apply();
+                    }
+                    refresh();
+                }));
+        column.addView(seekRow("最亮时亮度（约 3000 lux）", 20, 100,
+                prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MAX, DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MAX), "%",
+                value -> {
+                    prefs.edit().putInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MAX, value).apply();
+                    int min = prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MIN,
+                            DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MIN);
+                    if (min >= value) {
+                        prefs.edit().putInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MIN,
+                                Math.max(1, value - 10)).apply();
+                    }
+                    refresh();
+                }));
+
+        // ---------- 手动亮度 ----------
+        column.addView(sectionView("手动亮度"));
+        column.addView(tipView("在桌面左侧约 1/6 宽度的区域内上下滑动，即可快速无级调节；"
+                + "主动调节会自动切回手动模式。"));
         final int[] brightnessHolder = new int[]{host.getBrightnessPercent()};
         TextView valueView = statusView("当前亮度：" + brightnessHolder[0] + "%");
         valueView.setTextColor(COLOR_ACCENT);
@@ -591,6 +667,8 @@ public final class DesktopSettingsDialog {
                 brightnessHolder[0] = percent;
                 valueView.setText("当前亮度：" + percent + "%");
                 host.setBrightnessPercent(percent);
+                host.refreshBrightnessStatus();
+                modeStatus.setText(host.getBrightnessStatusText());
             }
 
             @Override public void onStartTrackingTouch(SeekBar seekBar) { }
@@ -617,12 +695,26 @@ public final class DesktopSettingsDialog {
 
         column.addView(sectionView("桌面手势一览"));
         column.addView(tipView("· 右滑 / 左滑 / 上滑：呼出应用列表"));
-        column.addView(tipView("· 左侧上下滑动：调节屏幕亮度"));
+        column.addView(tipView("· 左侧上下滑动：调节屏幕亮度（自动切回手动）"));
         column.addView(tipView("· 双击桌面空白处：快速切换夜间模式"));
         column.addView(tipView("· 长按桌面空白处：打开本设置中心"));
         column.addView(tipView("· 轻触天气卡片：切换三日 / 逐小时视图"));
 
-        showDarkDialog("手势与屏幕亮度", column, null, null);
+        AlertDialog dialog = showDarkDialog("手势与屏幕亮度", column, null, null);
+        // 打开期间定时刷新环境光读数，方便边看边调
+        if (dialog != null) {
+            final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
+            final Runnable tick = new Runnable() {
+                @Override
+                public void run() {
+                    host.refreshBrightnessStatus();
+                    modeStatus.setText(host.getBrightnessStatusText());
+                    handler.postDelayed(this, 800L);
+                }
+            };
+            dialog.setOnDismissListener(d -> handler.removeCallbacks(tick));
+            handler.postDelayed(tick, 800L);
+        }
     }
 
     // ==================================================================
@@ -1039,8 +1131,8 @@ public final class DesktopSettingsDialog {
     // ==================================================================
     //  对话框基础设施
     // ==================================================================
-    private void showDarkDialog(String title, View content, DialogInterface.OnClickListener positive,
-                                String positiveText) {
+    private AlertDialog showDarkDialog(String title, View content, DialogInterface.OnClickListener positive,
+                                       String positiveText) {
         // 手势屏蔽：长按桌面弹出的瞬间，手指抬起的那一下不应误触到分类卡片
         TouchGuardLayout guard = new TouchGuardLayout(context);
         guard.addView(content, new ViewGroup.LayoutParams(
@@ -1087,6 +1179,7 @@ public final class DesktopSettingsDialog {
                     Math.min(dp(520), (int) (context.getResources().getDisplayMetrics().widthPixels * 0.94f)),
                     WindowManager.LayoutParams.WRAP_CONTENT);
         }
+        return dialog;
     }
 
     private void promptText(String title, String hint, String initial, Consumer<String> onConfirm) {

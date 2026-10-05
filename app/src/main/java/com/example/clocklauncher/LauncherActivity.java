@@ -345,6 +345,23 @@ public class LauncherActivity extends AppCompatActivity {
                     standbyClockView.setBrightnessPercent(percent);
                 }
             }
+
+            @Override
+            public void refreshBrightnessStatus() {
+                if (standbyClockView != null) {
+                    standbyClockView.reapplyBrightnessMode();
+                }
+            }
+
+            @Override
+            public String getBrightnessStatusText() {
+                return standbyClockView != null ? standbyClockView.brightnessStatusText() : "亮度信息不可用";
+            }
+
+            @Override
+            public boolean hasLightSensor() {
+                return standbyClockView != null && standbyClockView.hasLightSensor();
+            }
         });
     }
 

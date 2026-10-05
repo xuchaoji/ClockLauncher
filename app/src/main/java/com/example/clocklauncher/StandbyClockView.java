@@ -9,6 +9,10 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.net.TrafficStats;
 import android.os.BatteryManager;
 import android.os.Handler;
@@ -66,6 +70,29 @@ public class StandbyClockView extends FrameLayout {
     private final Random random = new Random();
 
     private float brightness = -1f;
+
+    // ===== 自动亮度（环境光）=====
+    private SensorManager sensorManager;
+    private Sensor lightSensor;
+    private boolean lightSensorRegistered = false;
+    /** 最近一次环境光照度（lux）；-1 表示尚未读到。 */
+    private float ambientLux = -1f;
+    /** 自动亮度经过低通滤波后的目标值，避免光照抖动导致亮度跳变。 */
+    private float autoSmoothedBrightness = -1f;
+    /** 最近一次真正下发的亮度百分比，用于抑制无意义的高频写入。 */
+    private int lastAppliedBrightnessPercent = -1;
+
+    private final SensorEventListener lightListener = new SensorEventListener() {
+        @Override
+        public void onSensorChanged(SensorEvent event) {
+            if (event.sensor.getType() != Sensor.TYPE_LIGHT) return;
+            onAmbientLuxChanged(event.values[0]);
+        }
+
+        @Override
+        public void onAccuracyChanged(Sensor sensor, int accuracy) { }
+    };
+
     private float touchDownX;
     private float touchDownY;
     private float brightnessStartValue;
@@ -324,6 +351,8 @@ public class StandbyClockView extends FrameLayout {
         savedNormalBrightness = prefs.getFloat(DesktopConfig.KEY_NORMAL_BRIGHTNESS, DesktopConfig.DEFAULT_NORMAL_BRIGHTNESS);
         boolean isNight = determineNightModeActive();
         applyNightModeState(isNight, false);
+        // 亮度模式放在夜间模式之后处理：夜间模式优先级最高，会强制压到最低亮度
+        applyBrightnessMode();
 
         String format = ClockPrefs.getDesktopFormat(prefs);
         try {
@@ -356,6 +385,10 @@ public class StandbyClockView extends FrameLayout {
         }
         handler.removeCallbacks(burnInMover);
         handler.postDelayed(burnInMover, 10_000L);
+        // applySettings() 已按模式决定是否监听环境光，这里只需确保恢复监听
+        if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_AUTO && !nightModeActive) {
+            startLightSensor();
+        }
     }
 
     public void onPause() {
@@ -366,6 +399,8 @@ public class StandbyClockView extends FrameLayout {
         handler.removeCallbacks(cpuUpdater);
         handler.removeCallbacks(weatherUpdater);
         handler.removeCallbacks(longPressSettingsRunnable);
+        // 退到后台就停止监听环境光，省电
+        stopLightSensor();
     }
 
     @Override
@@ -920,6 +955,8 @@ public class StandbyClockView extends FrameLayout {
                 Toast.makeText(getContext(), "☀️ 已退出夜间模式", Toast.LENGTH_SHORT).show();
             }
         }
+        // 夜间模式进入/退出会改变亮度归属：进入时让自动亮度让位，退出时恢复原模式
+        applyBrightnessMode();
         updateHintText();
     }
 
@@ -954,9 +991,150 @@ public class StandbyClockView extends FrameLayout {
         int percent = Math.round(currentBrightness() * 100);
         if (nightModeActive) {
             hintView.setText("🌙 夜间待机 (" + Math.max(1, percent) + "%) · 双击退出 · 右滑应用列表");
+        } else if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_AUTO) {
+            hintView.setText("🔆 自动亮度 " + Math.max(1, percent) + "% (" + ambientLuxText() + ")"
+                    + "  ·  右滑应用列表  ·  长按设置");
+        } else if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_SYSTEM) {
+            hintView.setText("🔆 跟随系统亮度  ·  右滑应用列表  ·  左侧上下滑动改为手动  ·  长按设置");
         } else {
             hintView.setText("👉 右滑应用列表  ·  左侧上下滑动调亮度 (" + Math.max(1, percent) + "%)  ·  长按设置");
         }
+    }
+
+    // ==================== 亮度模式：手动 / 自动(环境光) / 跟随系统 ====================
+
+    /** 当前亮度模式。 */
+    public int brightnessMode() {
+        return prefs.getInt(DesktopConfig.KEY_BRIGHTNESS_MODE, DesktopConfig.BRIGHTNESS_MODE_MANUAL);
+    }
+
+    /**
+     * 依据当前亮度模式注册/注销环境光监听。
+     * 夜间模式优先级最高：夜间模式期间不接管亮度，避免把屏幕"调亮"破坏睡眠场景。
+     */
+    private void applyBrightnessMode() {        int mode = brightnessMode();
+        if (mode == DesktopConfig.BRIGHTNESS_MODE_AUTO && !nightModeActive) {
+            startLightSensor();
+            if (ambientLux >= 0f) {
+                applyAutoBrightness(ambientLux, false);
+            } else {
+                // 还没读到环境光，先沿用当前值，等第一次回调再接管
+                autoSmoothedBrightness = currentBrightness();
+            }
+        } else {
+            stopLightSensor();
+            lastAppliedBrightnessPercent = -1;
+            if (mode == DesktopConfig.BRIGHTNESS_MODE_SYSTEM && !nightModeActive) {
+                applySystemBrightness();
+            }
+        }
+        updateHintText();
+    }
+
+    private void startLightSensor() {
+        if (sensorManager == null) {
+            sensorManager = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+        }
+        if (sensorManager == null) return;
+        if (lightSensor == null) {
+            lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        }
+        if (lightSensor == null || lightSensorRegistered) return;
+        lightSensorRegistered = sensorManager.registerListener(
+                lightListener, lightSensor, SensorManager.SENSOR_DELAY_NORMAL);
+    }
+
+    private void stopLightSensor() {
+        if (sensorManager != null && lightSensorRegistered) {
+            sensorManager.unregisterListener(lightListener);
+        }
+        lightSensorRegistered = false;
+    }
+
+    private void onAmbientLuxChanged(float lux) {
+        ambientLux = lux;
+        if (nightModeActive) return;
+        if (brightnessMode() != DesktopConfig.BRIGHTNESS_MODE_AUTO) return;
+        applyAutoBrightness(lux, false);
+    }
+
+    /**
+     * 环境光 → 亮度映射。
+     * 人眼对亮度是近似对数感知的，所以用 log10(lux) 做归一化：
+     * 0 lux 落到最暗档，约 3000 lux（明亮室内/阴天）到达最亮档。
+     * 再做一次低通滤波，避免云影、灯光闪烁造成亮度抖动。
+     */
+    private void applyAutoBrightness(float lux, boolean immediate) {
+        int minPercent = clampInt(prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MIN,
+                DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MIN), 1, 95);
+        int maxPercent = clampInt(prefs.getInt(DesktopConfig.KEY_AUTO_BRIGHTNESS_MAX,
+                DesktopConfig.DEFAULT_AUTO_BRIGHTNESS_MAX), minPercent + 1, 100);
+
+        double norm = Math.log10(Math.max(0f, lux) + 1.0d) / Math.log10(3001.0d);
+        float ratio = (float) clamp(norm, 0d, 1d);
+        float target = (minPercent + (maxPercent - minPercent) * ratio) / 100f;
+
+        if (immediate || autoSmoothedBrightness <= 0f) {
+            autoSmoothedBrightness = target;
+        } else {
+            autoSmoothedBrightness += (target - autoSmoothedBrightness) * 0.30f;
+        }
+
+        int percent = Math.max(1, Math.round(autoSmoothedBrightness * 100));
+        if (percent == lastAppliedBrightnessPercent) return;
+        lastAppliedBrightnessPercent = percent;
+        setBrightnessInternal(autoSmoothedBrightness);
+    }
+
+    /** 跟随系统亮度：把窗口亮度交还给系统（含系统的自动亮度）。 */
+    private void applySystemBrightness() {
+        if (getContext() instanceof Activity) {
+            Activity activity = (Activity) getContext();
+            WindowManager.LayoutParams attrs = activity.getWindow().getAttributes();
+            attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;
+            activity.getWindow().setAttributes(attrs);
+        }
+        brightness = -1f;
+    }
+
+    /** 环境光文本，如 "128 lux"。 */
+    public String ambientLuxText() {
+        if (lightSensor == null) return "无光感";
+        if (ambientLux < 0f) return "读取中";
+        if (ambientLux < 10f) return String.format(Locale.getDefault(), "%.1f lux", ambientLux);
+        return String.format(Locale.getDefault(), "%d lux", Math.round(ambientLux));
+    }
+
+    /** 是否存在环境光传感器（部分设备没有）。 */
+    public boolean hasLightSensor() {
+        if (sensorManager == null) {
+            sensorManager = (SensorManager) getContext().getSystemService(Context.SENSOR_SERVICE);
+        }
+        if (lightSensor == null && sensorManager != null) {
+            lightSensor = sensorManager.getDefaultSensor(Sensor.TYPE_LIGHT);
+        }
+        return lightSensor != null;
+    }
+
+    /** 供设置面板展示的亮度状态摘要。 */
+    public String brightnessStatusText() {
+        switch (brightnessMode()) {
+            case DesktopConfig.BRIGHTNESS_MODE_AUTO:
+                return "环境光 " + ambientLuxText() + " · 自动亮度 " + Math.max(1, Math.round(currentBrightness() * 100)) + "%";
+            case DesktopConfig.BRIGHTNESS_MODE_SYSTEM:
+                return "跟随系统亮度 · 当前 " + Math.max(1, Math.round(currentBrightness() * 100)) + "%";
+            default:
+                return "手动亮度 · 当前 " + Math.max(1, Math.round(currentBrightness() * 100)) + "%";
+        }
+    }
+
+    /** 切换到手动亮度（手势或滑块被用户主动调整时调用）。 */
+    private void switchToManualBrightness(String reason) {
+        if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_MANUAL) return;
+        prefs.edit().putInt(DesktopConfig.KEY_BRIGHTNESS_MODE, DesktopConfig.BRIGHTNESS_MODE_MANUAL).apply();
+        stopLightSensor();
+        lastAppliedBrightnessPercent = -1;
+        Toast.makeText(getContext(), reason, Toast.LENGTH_SHORT).show();
     }
 
     /** 供设置面板等外部读取当前亮度百分比。 */
@@ -965,12 +1143,21 @@ public class StandbyClockView extends FrameLayout {
     }
 
     /** 供设置面板直接设定亮度。 */
+    /** 供设置面板在切换亮度模式后调用，让桌面立即按新模式接管亮度。 */
+    public void reapplyBrightnessMode() {
+        lastAppliedBrightnessPercent = -1;
+        autoSmoothedBrightness = -1f;
+        applyBrightnessMode();
+    }
+
     public void setBrightnessPercent(int percent) {
         float value = clamp(percent / 100f, 0.01f, 1f);
         if (nightModeActive) {
             prefs.edit().putInt(DesktopConfig.KEY_NIGHT_MODE_BRIGHTNESS, Math.max(1, percent)).apply();
             setBrightnessInternal(value);
         } else {
+            // 用户主动拖动滑块 => 切回手动亮度，否则会被自动亮度立刻覆盖回去
+            switchToManualBrightness("已切换为手动亮度");
             setBrightness(value);
         }
     }
@@ -985,6 +1172,10 @@ public class StandbyClockView extends FrameLayout {
     }
 
     private void setBrightness(float value) {
+        // 手势滑动属于用户主动干预，退出自动/跟随系统模式，否则会被立刻覆盖
+        if (!nightModeActive) {
+            switchToManualBrightness("已切换为手动亮度");
+        }
         setBrightnessInternal(value);
         if (!nightModeActive) {
             savedNormalBrightness = value;
@@ -1001,6 +1192,14 @@ public class StandbyClockView extends FrameLayout {
             a.getWindow().setAttributes(attrs);
         }
         updateHintText();
+    }
+
+    private int clampInt(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private float clamp(float value, float min, float max) {

@@ -47,8 +47,21 @@ public final class DesktopConfig {
     public static final String KEY_NIGHT_EXTRA_DIM = "desktop_night_extra_dim";
     public static final String KEY_NIGHT_EXTRA_DIM_DEPTH = "desktop_night_extra_dim_depth";
     public static final String KEY_NORMAL_BRIGHTNESS = "desktop_normal_brightness";
+    public static final String KEY_BRIGHTNESS_MODE = "desktop_brightness_mode";
+    public static final String KEY_AUTO_BRIGHTNESS_MIN = "desktop_auto_brightness_min";
+    public static final String KEY_AUTO_BRIGHTNESS_MAX = "desktop_auto_brightness_max";
     public static final String KEY_POS_PREFIX = "desktop_pos_";
     public static final String KEY_PRESETS = "desktop_presets_json";
+
+    /** 亮度模式：手动（手势/滑块）。 */
+    public static final int BRIGHTNESS_MODE_MANUAL = 0;
+    /** 亮度模式：自动（按环境光传感器）。 */
+    public static final int BRIGHTNESS_MODE_AUTO = 1;
+    /** 亮度模式：跟随系统亮度（不覆盖窗口亮度）。 */
+    public static final int BRIGHTNESS_MODE_SYSTEM = 2;
+
+    public static final int DEFAULT_AUTO_BRIGHTNESS_MIN = 8;
+    public static final int DEFAULT_AUTO_BRIGHTNESS_MAX = 100;
 
     public static final String DEFAULT_NIGHT_START = "22:00";
     public static final String DEFAULT_NIGHT_END = "07:00";
@@ -75,6 +88,9 @@ public final class DesktopConfig {
             KEY_SHOW_WEATHER, KEY_WEATHER_CITY, KEY_WEATHER_LAT, KEY_WEATHER_LON,
             KEY_WEATHER_MODE, KEY_WEATHER_COLOR, KEY_WEATHER_SIZE, KEY_WEATHER_BOLD,
             KEY_WEATHER_WIDTH, KEY_WEATHER_HEIGHT, KEY_WEATHER_ALPHA, KEY_WEATHER_TEXT_SCALE,
+            KEY_NIGHT_MODE_MANUAL, KEY_NIGHT_MODE_AUTO, KEY_NIGHT_MODE_START, KEY_NIGHT_MODE_END,
+            KEY_NIGHT_MODE_BRIGHTNESS, KEY_NIGHT_EXTRA_DIM, KEY_NIGHT_EXTRA_DIM_DEPTH,
+            KEY_BRIGHTNESS_MODE, KEY_AUTO_BRIGHTNESS_MIN, KEY_AUTO_BRIGHTNESS_MAX,
             posX(COMPONENT_CLOCK), posY(COMPONENT_CLOCK), posX(COMPONENT_DATE), posY(COMPONENT_DATE),
             posX(COMPONENT_BATTERY), posY(COMPONENT_BATTERY), posX(COMPONENT_NETWORK), posY(COMPONENT_NETWORK),
             posX(COMPONENT_CPU), posY(COMPONENT_CPU), posX(COMPONENT_WEATHER), posY(COMPONENT_WEATHER)
@@ -121,6 +137,9 @@ public final class DesktopConfig {
             e.putFloat(KEY_NORMAL_BRIGHTNESS, DEFAULT_NORMAL_BRIGHTNESS);
             changed = true;
         }
+        changed |= putIntIfMissing(prefs, e, KEY_BRIGHTNESS_MODE, BRIGHTNESS_MODE_MANUAL);
+        changed |= putIntIfMissing(prefs, e, KEY_AUTO_BRIGHTNESS_MIN, DEFAULT_AUTO_BRIGHTNESS_MIN);
+        changed |= putIntIfMissing(prefs, e, KEY_AUTO_BRIGHTNESS_MAX, DEFAULT_AUTO_BRIGHTNESS_MAX);
         if (changed) e.apply();
     }
 
