@@ -215,42 +215,83 @@ public final class DesktopSettingsDialog {
         }));
 
         column.addView(sectionView("时间格式"));
-        column.addView(tipView("选择预设格式，或在下方自定义（毫秒会被自动剔除）。"));
-        Spinner spinner = new Spinner(context);
-        ArrayAdapter<String> adapter = new ArrayAdapter<>(context,
-                android.R.layout.simple_spinner_dropdown_item, TIME_FORMAT_LABELS);
-        spinner.setAdapter(adapter);
-        int presetIndex = indexOfFormat(ClockPrefs.getDesktopFormat(prefs));
-        if (presetIndex >= 0) spinner.setSelection(presetIndex);
+        column.addView(tipView("预设下拉框与下方输入框是同一个设置，两边会互相同步："
+                + "选预设会自动回填输入框，改完输入框点「应用」也会同步预设的选中项。"));
+
+        // 当前生效格式（毫秒已被剔除，保证和实际值一致）
+        final String initialFormat = ClockPrefs.getDesktopFormat(prefs);
+        final int customIndex = TIME_FORMAT_LABELS.length;
+
+        // 先创建输入框：下拉框的回调需要回填它
+        final EditText formatEdit = editRow("自定义格式（如 HH:mm:ss）", InputType.TYPE_CLASS_TEXT, initialFormat);
+
+        final String[] formatLabels = new String[TIME_FORMAT_LABELS.length + 1];
+        System.arraycopy(TIME_FORMAT_LABELS, 0, formatLabels, 0, TIME_FORMAT_LABELS.length);
+        formatLabels[customIndex] = "✏️ 自定义（用下方输入框）";
+
+        final Spinner spinner = new Spinner(context);
+        spinner.setAdapter(new ArrayAdapter<>(context,
+                android.R.layout.simple_spinner_dropdown_item, formatLabels));
+
+        final boolean[] syncing = new boolean[]{false};
+
+        // 关键：先把选中项定好，再挂监听。
+        // 否则当前是自定义格式时 indexOfFormat 返回 -1，Spinner 会默认选中第 0 项并触发回调，
+        // 光打开这个面板就会把自定义格式悄悄改成 HH:mm:ss。
+        int presetIndex = indexOfFormat(initialFormat);
+        spinner.setSelection(presetIndex >= 0 ? presetIndex : customIndex);
+
         spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
-                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_FORMAT, TIME_FORMAT_PRESETS[position]).apply();
+                if (syncing[0]) return;
+                if (position < 0 || position >= TIME_FORMAT_PRESETS.length) {
+                    // 选中"自定义"：不改设置，提示用户去下面填写
+                    toast("请在下方输入框填写格式，再点「应用输入框格式」");
+                    return;
+                }
+                String pattern = TIME_FORMAT_PRESETS[position];
+                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_FORMAT, pattern).apply();
+                // 关键修复：把预设回填到输入框。
+                // 否则输入框停留在旧值，用户看到两边不一致，顺手点一下「应用」就把刚选的预设又改回去了。
+                formatEdit.setText(pattern);
+                formatEdit.setSelection(pattern.length());
                 refresh();
             }
 
             @Override
             public void onNothingSelected(android.widget.AdapterView<?> parent) { }
         });
-        column.addView(spinner);
 
-        EditText formatEdit = editRow("自定义格式（如 HH:mm:ss）", InputType.TYPE_CLASS_TEXT,
-                ClockPrefs.getDesktopFormat(prefs));
+        column.addView(spinner);
         column.addView(formatEdit);
+
         LinearLayout formatActions = row();
-        formatActions.addView(button("应用自定义格式", true, v -> {
+        formatActions.addView(button("应用输入框格式", true, v -> {
             String pattern = formatEdit.getText().toString().trim();
+            if (pattern.isEmpty()) {
+                toast("请先输入时间格式，例如 HH:mm:ss");
+                return;
+            }
             try {
                 ClockPrefs.validateFormat(pattern);
-                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_FORMAT,
-                        ClockPrefs.stripMilliseconds(pattern)).apply();
+                String normalized = ClockPrefs.stripMilliseconds(pattern);
+                prefs.edit().putString(ClockPrefs.KEY_DESKTOP_FORMAT, normalized).apply();
+                formatEdit.setText(normalized);
+                formatEdit.setSelection(normalized.length());
+                // 同步下拉框：命中预设就选中对应预设，否则落到"自定义"
+                int match = indexOfFormat(normalized);
+                syncing[0] = true;
+                spinner.setSelection(match >= 0 ? match : customIndex);
+                syncing[0] = false;
                 refresh();
-                toast("时间格式已应用：" + ClockPrefs.getDesktopFormat(prefs));
+                toast("时间格式已应用：" + normalized);
             } catch (IllegalArgumentException e) {
                 toast("时间格式非法，请检查（例如 HH:mm:ss）");
             }
         }));
         column.addView(formatActions);
+        column.addView(tipView("说明：格式里若含 S（毫秒）会被自动剔除 —— 桌面摆钟不需要毫秒。"));
 
         showDarkDialog("时钟样式", column, null, null);
     }
