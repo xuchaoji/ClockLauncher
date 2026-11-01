@@ -63,6 +63,7 @@ public class LauncherActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences(ClockPrefs.NAME, MODE_PRIVATE);
         ClockPrefs.ensureDefaults(prefs);
+        applyScreenOrientation();
 
         standbyClockView = new StandbyClockView(this);
         appDrawerView = new AppDrawerView(this);
@@ -210,6 +211,7 @@ public class LauncherActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        applyScreenOrientation();
         if (standbyClockView != null) {
             standbyClockView.onResume();
         }
@@ -362,7 +364,23 @@ public class LauncherActivity extends AppCompatActivity {
             public boolean hasLightSensor() {
                 return standbyClockView != null && standbyClockView.hasLightSensor();
             }
+
+            @Override
+            public void applyScreenOrientation() {
+                LauncherActivity.this.applyScreenOrientation();
+            }
         });
+    }
+
+    public void applyScreenOrientation() {
+        if (prefs == null) {
+            prefs = getSharedPreferences(ClockPrefs.NAME, MODE_PRIVATE);
+        }
+        int orient = DesktopConfig.getScreenOrientation(prefs);
+        int target = DesktopConfig.toActivityInfoOrientation(orient);
+        if (getRequestedOrientation() != target) {
+            setRequestedOrientation(target);
+        }
     }
 
     private int dp(int value) {

@@ -62,6 +62,8 @@ public class StandbyClockView extends FrameLayout {
     private CpuMonitorView cpuMonitorView;
     private TextView hintView;
     private FrameLayout bottomDockBar;
+    private FrameLayout rotateButton;
+    private TextView rotateIconView;
     private View dimOverlayView;
 
     private Handler handler;
@@ -268,6 +270,8 @@ public class StandbyClockView extends FrameLayout {
         hintView.setTextSize(13);
         hintView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         hintView.setGravity(Gravity.CENTER);
+        hintView.setSingleLine(true);
+        hintView.setEllipsize(android.text.TextUtils.TruncateAt.END);
 
         bottomDockBar.addView(hintView, new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         LayoutParams dockParams = new LayoutParams(LayoutParams.WRAP_CONTENT, dp(42), Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
@@ -279,6 +283,37 @@ public class StandbyClockView extends FrameLayout {
                 actionListener.onOpenAppDrawer();
             }
         });
+
+        // 7.5 桌面快捷旋转并固定屏幕按钮（点击切换，长按重置为跟随系统）
+        rotateButton = new FrameLayout(getContext());
+        GradientDrawable rotateBg = new GradientDrawable();
+        rotateBg.setShape(GradientDrawable.OVAL);
+        rotateBg.setColor(Color.argb(140, 20, 24, 34));
+        rotateBg.setStroke(dp(1), Color.argb(60, 255, 255, 255));
+        rotateButton.setBackground(rotateBg);
+
+        rotateIconView = new TextView(getContext());
+        rotateIconView.setText("🔄");
+        rotateIconView.setTextSize(16);
+        rotateIconView.setGravity(Gravity.CENTER);
+        rotateButton.addView(rotateIconView, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
+
+        rotateButton.setOnClickListener(v -> {
+            v.animate().scaleX(0.82f).scaleY(0.82f).setDuration(80)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f).setDuration(120).start())
+                    .start();
+            rotateScreenNext();
+        });
+
+        rotateButton.setOnLongClickListener(v -> {
+            v.animate().scaleX(0.82f).scaleY(0.82f).setDuration(80)
+                    .withEndAction(() -> v.animate().scaleX(1f).scaleY(1f).setDuration(120).start())
+                    .start();
+            resetScreenOrientation();
+            return true;
+        });
+
+        addView(rotateButton, new LayoutParams(dp(42), dp(42)));
 
         // 8. 夜间模式纯黑微调遮罩
         dimOverlayView = new View(getContext()) {
@@ -322,6 +357,9 @@ public class StandbyClockView extends FrameLayout {
         networkView.setVisibility(showNetwork ? View.VISIBLE : View.GONE);
         cpuMonitorView.setVisibility(showCpu ? View.VISIBLE : View.GONE);
         weatherCardView.setVisibility(showWeather ? View.VISIBLE : View.GONE);
+        if (rotateButton != null) {
+            rotateButton.setVisibility(DesktopConfig.isShowRotateButton(prefs) ? View.VISIBLE : View.GONE);
+        }
 
         applyTextStyle(dateView, DesktopConfig.KEY_DATE_COLOR, DesktopConfig.KEY_DATE_SIZE,
                 DesktopConfig.KEY_DATE_BOLD, "#D2FFFFFF", 20, false);
@@ -430,7 +468,14 @@ public class StandbyClockView extends FrameLayout {
             restoreCustomPosition(weatherCardView, DesktopConfig.COMPONENT_WEATHER);
 
             int dockW = getViewWidth(bottomDockBar);
-            setChildBounds(bottomDockBar, (w - dockW) / 2, h - dp(64), dockW, dp(42));
+            int dockY = h - dp(64);
+            int btnSize = dp(42);
+            boolean hasBtn = (rotateButton != null && rotateButton.getVisibility() != View.GONE);
+            int btnMargin = hasBtn ? (btnSize + dp(14)) : 0;
+            int maxDockW = Math.max(dp(160), w - btnMargin * 2);
+            int actualDockW = Math.min(dockW, maxDockW);
+            setChildBounds(bottomDockBar, (w - actualDockW) / 2, dockY, actualDockW, dp(42));
+            layoutRotateButton(w, h, actualDockW, dockY);
             return;
         }
 
@@ -469,10 +514,17 @@ public class StandbyClockView extends FrameLayout {
                 setChildBounds(cpuMonitorView, (w - cpuW) / 2, h - dp(80) - cpuH, cpuW, cpuH);
             }
 
-            // 5. 底部右滑提示胶囊
+            // 5. 底部右滑提示胶囊与旋转按钮
             int dockW = getViewWidth(bottomDockBar);
             int dockH = dp(42);
-            setChildBounds(bottomDockBar, (w - dockW) / 2, h - dp(64), dockW, dockH);
+            int dockY = h - dp(64);
+            int btnSize = dp(42);
+            boolean hasBtn = (rotateButton != null && rotateButton.getVisibility() != View.GONE);
+            int btnMargin = hasBtn ? (btnSize + dp(14)) : 0;
+            int maxDockW = Math.max(dp(160), w - btnMargin * 2);
+            int actualDockW = Math.min(dockW, maxDockW);
+            setChildBounds(bottomDockBar, (w - actualDockW) / 2, dockY, actualDockW, dockH);
+            layoutRotateButton(w, h, actualDockW, dockY);
         } else {
             // ============ 横屏布局 (桌面待机时钟) ============
             // 1. 左上角：天气卡片
@@ -497,8 +549,23 @@ public class StandbyClockView extends FrameLayout {
 
             // 6. 底部中央：导航与操作提示
             int dockW = getViewWidth(bottomDockBar);
-            setChildBounds(bottomDockBar, (w - dockW) / 2, h - dp(56), dockW, dp(42));
+            int dockY = h - dp(56);
+            int btnSize = dp(42);
+            boolean hasBtn = (rotateButton != null && rotateButton.getVisibility() != View.GONE);
+            int btnMargin = hasBtn ? (btnSize + dp(14)) : 0;
+            int maxDockW = Math.max(dp(160), w - btnMargin * 2);
+            int actualDockW = Math.min(dockW, maxDockW);
+            setChildBounds(bottomDockBar, (w - actualDockW) / 2, dockY, actualDockW, dp(42));
+            layoutRotateButton(w, h, actualDockW, dockY);
         }
+    }
+
+    private void layoutRotateButton(int w, int h, int dockW, int dockY) {
+        if (rotateButton == null || rotateButton.getVisibility() == View.GONE) return;
+        int btnSize = dp(42);
+        int targetX = w - btnSize - dp(16);
+        setChildBounds(rotateButton, targetX, dockY, btnSize, btnSize);
+        rotateButton.bringToFront();
     }
 
     private void restoreCustomPosition(View view, String component) {
@@ -646,6 +713,9 @@ public class StandbyClockView extends FrameLayout {
         animateBurnInSafely(weatherCardView, dp(16), dp(16), dp(5));
         if (cpuMonitorView != null && showCpu) {
             animateBurnInSafely(cpuMonitorView, dp(12), dp(18), dp(4));
+        }
+        if (rotateButton != null && rotateButton.getVisibility() == View.VISIBLE) {
+            animateBurnInSafely(rotateButton, dp(10), dp(10), dp(3));
         }
     }
 
@@ -972,6 +1042,31 @@ public class StandbyClockView extends FrameLayout {
         }
     }
 
+    public void rotateScreenNext() {
+        int current = DesktopConfig.getScreenOrientation(prefs);
+        boolean isLandscape = getWidth() > getHeight();
+        int next = DesktopConfig.getNextOrientation(current, isLandscape);
+
+        DesktopConfig.setScreenOrientation(prefs, next);
+        applyOrientationDirectly(next);
+
+        String label = DesktopConfig.getOrientationLabel(next);
+        Toast.makeText(getContext(), "已固定屏幕方向：" + label, Toast.LENGTH_SHORT).show();
+    }
+
+    public void resetScreenOrientation() {
+        DesktopConfig.setScreenOrientation(prefs, DesktopConfig.ORIENT_UNSPECIFIED);
+        applyOrientationDirectly(DesktopConfig.ORIENT_UNSPECIFIED);
+        Toast.makeText(getContext(), "屏幕方向已重置为：跟随系统", Toast.LENGTH_SHORT).show();
+    }
+
+    private void applyOrientationDirectly(int orient) {
+        if (getContext() instanceof Activity) {
+            Activity act = (Activity) getContext();
+            act.setRequestedOrientation(DesktopConfig.toActivityInfoOrientation(orient));
+        }
+    }
+
     private void checkNightModeSchedule() {
         boolean autoScheduleNow = isWithinAutoSchedule();
         if (lastScheduleState == null) {
@@ -990,14 +1085,13 @@ public class StandbyClockView extends FrameLayout {
         if (hintView == null) return;
         int percent = Math.round(currentBrightness() * 100);
         if (nightModeActive) {
-            hintView.setText("🌙 夜间待机 (" + Math.max(1, percent) + "%) · 双击退出 · 右滑应用列表");
+            hintView.setText("🌙 夜间待机 (" + Math.max(1, percent) + "%) · 双击退出 · 右滑列表");
         } else if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_AUTO) {
-            hintView.setText("🔆 自动亮度 " + Math.max(1, percent) + "% (" + ambientLuxText() + ")"
-                    + "  ·  右滑应用列表  ·  长按设置");
+            hintView.setText("🔆 自动亮度 " + Math.max(1, percent) + "% · 右滑列表 · 长按设置");
         } else if (brightnessMode() == DesktopConfig.BRIGHTNESS_MODE_SYSTEM) {
-            hintView.setText("🔆 跟随系统亮度  ·  右滑应用列表  ·  左侧上下滑动改为手动  ·  长按设置");
+            hintView.setText("🔆 系统亮度 · 右滑列表 · 长按设置");
         } else {
-            hintView.setText("👉 右滑应用列表  ·  左侧上下滑动调亮度 (" + Math.max(1, percent) + "%)  ·  长按设置");
+            hintView.setText("👉 亮度 " + Math.max(1, percent) + "% · 右滑列表 · 长按设置");
         }
     }
 

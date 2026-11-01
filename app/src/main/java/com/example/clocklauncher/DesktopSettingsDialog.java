@@ -73,6 +73,9 @@ public final class DesktopSettingsDialog {
 
         /** 本机是否有环境光传感器。 */
         boolean hasLightSensor();
+
+        /** 立即刷新并应用当前屏幕方向配置。 */
+        void applyScreenOrientation();
     }
 
     // ===== 配色 =====
@@ -162,6 +165,11 @@ public final class DesktopSettingsDialog {
         addEntry(column, "🖐️", "手势与屏幕亮度",
                 "亮度 " + host.getBrightnessPercent() + "% · 左侧上下滑动调亮度",
                 this::showGestureDialog);
+
+        addEntry(column, "🔄", "屏幕方向与旋转",
+                DesktopConfig.getOrientationLabel(DesktopConfig.getScreenOrientation(prefs))
+                        + (DesktopConfig.isShowRotateButton(prefs) ? " · 桌面快捷按钮显示" : " · 桌面快捷按钮隐藏"),
+                this::showOrientationDialog);
 
         addEntry(column, "🎛️", "排版布局与预设",
                 DesktopConfig.hasPosition(prefs, DesktopConfig.COMPONENT_CLOCK)
@@ -759,6 +767,75 @@ public final class DesktopSettingsDialog {
     }
 
     // ==================================================================
+    //  6.5 屏幕方向与旋转
+    // ==================================================================
+    private void showOrientationDialog() {
+        LinearLayout column = column();
+        column.addView(titleView("🔄 屏幕方向与旋转"));
+        column.addView(tipView("本设置仅对待机桌面时钟生效，不会改动系统全局自动旋转设置，不影响其他应用。"));
+
+        column.addView(sectionView("屏幕方向锁定"));
+        int currentOrient = DesktopConfig.getScreenOrientation(prefs);
+        final TextView orientStatus = statusView("当前方向：" + DesktopConfig.getOrientationLabel(currentOrient));
+        orientStatus.setTextColor(COLOR_ACCENT);
+        column.addView(orientStatus);
+
+        Spinner orientSpinner = new Spinner(context);
+        final String[] orientLabels = new String[]{
+                "📱 跟随系统（随系统自动旋转）",
+                "🔄 锁定横屏（标准横屏，充电口在右）",
+                "🔄 锁定反向横屏（倒置横屏，充电口在左）",
+                "🧭 传感器横屏（横放左右自适应，不转竖屏）",
+                "📱 锁定竖屏（固定竖直显示）",
+                "🌐 传感器全向自适应（四方向自由旋转）"
+        };
+        final int[] orientValues = new int[]{
+                DesktopConfig.ORIENT_UNSPECIFIED,
+                DesktopConfig.ORIENT_LANDSCAPE,
+                DesktopConfig.ORIENT_REVERSE_LANDSCAPE,
+                DesktopConfig.ORIENT_SENSOR_LANDSCAPE,
+                DesktopConfig.ORIENT_PORTRAIT,
+                DesktopConfig.ORIENT_FULL_SENSOR
+        };
+
+        orientSpinner.setAdapter(new ArrayAdapter<>(context,
+                android.R.layout.simple_spinner_dropdown_item, orientLabels));
+
+        int selectedIndex = 0;
+        for (int i = 0; i < orientValues.length; i++) {
+            if (orientValues[i] == currentOrient) {
+                selectedIndex = i;
+                break;
+            }
+        }
+        orientSpinner.setSelection(selectedIndex);
+        orientSpinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(android.widget.AdapterView<?> parent, View view, int position, long id) {
+                int targetOrient = orientValues[position];
+                DesktopConfig.setScreenOrientation(prefs, targetOrient);
+                host.applyScreenOrientation();
+                refresh();
+                orientStatus.setText("当前方向：" + DesktopConfig.getOrientationLabel(targetOrient));
+            }
+
+            @Override
+            public void onNothingSelected(android.widget.AdapterView<?> parent) { }
+        });
+        column.addView(orientSpinner);
+
+        column.addView(space(10));
+        column.addView(sectionView("桌面快捷旋转"));
+        column.addView(checkRow("在桌面显示旋转快捷按钮（🔄）", DesktopConfig.isShowRotateButton(prefs), checked -> {
+            DesktopConfig.setShowRotateButton(prefs, checked);
+            refresh();
+        }));
+        column.addView(tipView("桌面直接点：在桌面右下方常驻「🔄」按钮，点击即可顺时针快速切换并固定屏幕方向；长按该按钮可一键重置为跟随系统。"));
+
+        showDarkDialog("屏幕方向与旋转", column, null, null);
+    }
+
+    // ==================================================================
     //  7. 排版布局与预设
     // ==================================================================
     private void showLayoutDialog() {
@@ -1288,9 +1365,13 @@ public final class DesktopSettingsDialog {
         editor.putBoolean(DesktopConfig.KEY_NIGHT_EXTRA_DIM, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM);
         editor.putInt(DesktopConfig.KEY_NIGHT_EXTRA_DIM_DEPTH, DesktopConfig.DEFAULT_NIGHT_EXTRA_DIM_DEPTH);
 
+        editor.putInt(DesktopConfig.KEY_SCREEN_ORIENTATION, DesktopConfig.ORIENT_UNSPECIFIED);
+        editor.putBoolean(DesktopConfig.KEY_SHOW_ROTATE_BUTTON, true);
+
         editor.apply();
         DesktopConfig.resetAllPositions(prefs);
         ClockPrefs.ensureDefaults(prefs);
+        host.applyScreenOrientation();
     }
 
     // ==================================================================

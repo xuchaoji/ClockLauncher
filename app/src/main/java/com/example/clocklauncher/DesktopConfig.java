@@ -1,6 +1,7 @@
 package com.example.clocklauncher;
 
 import android.content.SharedPreferences;
+import android.content.pm.ActivityInfo;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -52,6 +53,21 @@ public final class DesktopConfig {
     public static final String KEY_AUTO_BRIGHTNESS_MAX = "desktop_auto_brightness_max";
     public static final String KEY_POS_PREFIX = "desktop_pos_";
     public static final String KEY_PRESETS = "desktop_presets_json";
+    public static final String KEY_SCREEN_ORIENTATION = "desktop_screen_orientation";
+    public static final String KEY_SHOW_ROTATE_BUTTON = "desktop_show_rotate_button";
+
+    /** 屏幕方向：跟随系统。 */
+    public static final int ORIENT_UNSPECIFIED = 0;
+    /** 屏幕方向：锁定横屏。 */
+    public static final int ORIENT_LANDSCAPE = 1;
+    /** 屏幕方向：锁定反向横屏（倒置横屏，适合充电口反向摆放）。 */
+    public static final int ORIENT_REVERSE_LANDSCAPE = 2;
+    /** 屏幕方向：传感器横屏（横放左右自适应，不切竖屏）。 */
+    public static final int ORIENT_SENSOR_LANDSCAPE = 3;
+    /** 屏幕方向：锁定竖屏。 */
+    public static final int ORIENT_PORTRAIT = 4;
+    /** 屏幕方向：传感器全向自适应。 */
+    public static final int ORIENT_FULL_SENSOR = 5;
 
     /** 亮度模式：手动（手势/滑块）。 */
     public static final int BRIGHTNESS_MODE_MANUAL = 0;
@@ -91,6 +107,7 @@ public final class DesktopConfig {
             KEY_NIGHT_MODE_MANUAL, KEY_NIGHT_MODE_AUTO, KEY_NIGHT_MODE_START, KEY_NIGHT_MODE_END,
             KEY_NIGHT_MODE_BRIGHTNESS, KEY_NIGHT_EXTRA_DIM, KEY_NIGHT_EXTRA_DIM_DEPTH,
             KEY_BRIGHTNESS_MODE, KEY_AUTO_BRIGHTNESS_MIN, KEY_AUTO_BRIGHTNESS_MAX,
+            KEY_SCREEN_ORIENTATION, KEY_SHOW_ROTATE_BUTTON,
             posX(COMPONENT_CLOCK), posY(COMPONENT_CLOCK), posX(COMPONENT_DATE), posY(COMPONENT_DATE),
             posX(COMPONENT_BATTERY), posY(COMPONENT_BATTERY), posX(COMPONENT_NETWORK), posY(COMPONENT_NETWORK),
             posX(COMPONENT_CPU), posY(COMPONENT_CPU), posX(COMPONENT_WEATHER), posY(COMPONENT_WEATHER)
@@ -140,6 +157,8 @@ public final class DesktopConfig {
         changed |= putIntIfMissing(prefs, e, KEY_BRIGHTNESS_MODE, BRIGHTNESS_MODE_MANUAL);
         changed |= putIntIfMissing(prefs, e, KEY_AUTO_BRIGHTNESS_MIN, DEFAULT_AUTO_BRIGHTNESS_MIN);
         changed |= putIntIfMissing(prefs, e, KEY_AUTO_BRIGHTNESS_MAX, DEFAULT_AUTO_BRIGHTNESS_MAX);
+        changed |= putIntIfMissing(prefs, e, KEY_SCREEN_ORIENTATION, ORIENT_UNSPECIFIED);
+        changed |= putBooleanIfMissing(prefs, e, KEY_SHOW_ROTATE_BUTTON, true);
         if (changed) e.apply();
     }
 
@@ -303,4 +322,78 @@ public final class DesktopConfig {
     }
 
     private static float clamp01(float value) { return Math.max(0f, Math.min(1f, value)); }
+
+    public static int getScreenOrientation(SharedPreferences prefs) {
+        return prefs.getInt(KEY_SCREEN_ORIENTATION, ORIENT_UNSPECIFIED);
+    }
+
+    public static void setScreenOrientation(SharedPreferences prefs, int orientation) {
+        prefs.edit().putInt(KEY_SCREEN_ORIENTATION, orientation).apply();
+    }
+
+    public static boolean isShowRotateButton(SharedPreferences prefs) {
+        return prefs.getBoolean(KEY_SHOW_ROTATE_BUTTON, true);
+    }
+
+    public static void setShowRotateButton(SharedPreferences prefs, boolean show) {
+        prefs.edit().putBoolean(KEY_SHOW_ROTATE_BUTTON, show).apply();
+    }
+
+    public static int toActivityInfoOrientation(int orient) {
+        switch (orient) {
+            case ORIENT_LANDSCAPE:
+                return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+            case ORIENT_REVERSE_LANDSCAPE:
+                return ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE;
+            case ORIENT_SENSOR_LANDSCAPE:
+                return ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+            case ORIENT_PORTRAIT:
+                return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+            case ORIENT_FULL_SENSOR:
+                return ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR;
+            case ORIENT_UNSPECIFIED:
+            default:
+                return ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        }
+    }
+
+    public static String getOrientationLabel(int orient) {
+        switch (orient) {
+            case ORIENT_LANDSCAPE:
+                return "锁定横屏";
+            case ORIENT_REVERSE_LANDSCAPE:
+                return "锁定反向横屏";
+            case ORIENT_SENSOR_LANDSCAPE:
+                return "传感器横屏（横放左右自适应）";
+            case ORIENT_PORTRAIT:
+                return "锁定竖屏";
+            case ORIENT_FULL_SENSOR:
+                return "传感器全向自适应";
+            case ORIENT_UNSPECIFIED:
+            default:
+                return "跟随系统";
+        }
+    }
+
+    /**
+     * 桌面直接点击旋转时的循环顺序：
+     * 锁定横屏 -> 传感器横屏 -> 锁定反向横屏 -> 锁定竖屏 -> 再次回到锁定横屏。
+     * 若当前处于跟随系统且当前不是横屏，则首次点击直接切换并固定为锁定横屏。
+     */
+    public static int getNextOrientation(int currentOrient, boolean currentlyLandscape) {
+        switch (currentOrient) {
+            case ORIENT_UNSPECIFIED:
+                return currentlyLandscape ? ORIENT_SENSOR_LANDSCAPE : ORIENT_LANDSCAPE;
+            case ORIENT_LANDSCAPE:
+                return ORIENT_SENSOR_LANDSCAPE;
+            case ORIENT_SENSOR_LANDSCAPE:
+                return ORIENT_REVERSE_LANDSCAPE;
+            case ORIENT_REVERSE_LANDSCAPE:
+                return ORIENT_PORTRAIT;
+            case ORIENT_PORTRAIT:
+            case ORIENT_FULL_SENSOR:
+            default:
+                return ORIENT_LANDSCAPE;
+        }
+    }
 }

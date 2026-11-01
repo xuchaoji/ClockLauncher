@@ -51,6 +51,7 @@ public class DesktopLayoutEditActivity extends AppCompatActivity {
 
         prefs = getSharedPreferences(ClockPrefs.NAME, MODE_PRIVATE);
         ClockPrefs.ensureDefaults(prefs);
+        setRequestedOrientation(DesktopConfig.toActivityInfoOrientation(DesktopConfig.getScreenOrientation(prefs)));
 
         buildUi();
     }
